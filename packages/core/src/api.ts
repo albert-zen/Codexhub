@@ -38,6 +38,10 @@ export interface CreateWorkspaceRequest {
   commit_sha?: string | null | undefined;
 }
 
+export interface CleanupWorkspaceRequest {
+  delete_files?: boolean | undefined;
+}
+
 export interface StartSessionRequest {
   workspace_id: string;
   project_id?: string | null | undefined;
@@ -83,6 +87,14 @@ export interface ProjectResponse {
 
 export interface WorkspaceResponse {
   workspace: Workspace;
+}
+
+export interface WorkspaceCleanupResponse {
+  workspace: Workspace;
+  cleanup: {
+    status: Workspace["status"];
+    deleted_files: boolean;
+  };
 }
 
 export interface SessionResponse {

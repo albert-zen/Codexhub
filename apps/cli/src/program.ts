@@ -3,6 +3,7 @@ import { Command, InvalidArgumentError } from "commander";
 import type {
   CreateProjectRequest,
   CreateWorkspaceRequest,
+  CleanupWorkspaceRequest,
   ItemListQuery,
   ItemType,
   MessageMode,
@@ -46,6 +47,10 @@ interface WorkspaceCreateOptions extends BaseCommandOptions {
   cwd?: string;
   branch?: string;
   commitSha?: string;
+}
+
+interface WorkspaceCleanupOptions extends BaseCommandOptions {
+  deleteFiles?: boolean;
 }
 
 interface SessionStartOptions extends BaseCommandOptions {
@@ -169,6 +174,25 @@ export function createProgram(env: CliEnvironment = {}): Command {
         const result = await client(program, env).post("/workspaces", body);
         printResult(env, opts, result, () =>
           formatCreated("Workspace", unwrapRecord(result, "workspace"), "path"),
+        );
+      }),
+    );
+  jsonOption(workspace.command("cleanup").description("Clean up a workspace"))
+    .argument("<workspace-id>", "Workspace ID")
+    .option(
+      "--delete-files",
+      "Delete the workspace directory after safety checks",
+    )
+    .action((workspaceId: string, opts: WorkspaceCleanupOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).post(
+          `/workspaces/${encodeURIComponent(workspaceId)}/cleanup`,
+          {
+            delete_files: opts.deleteFiles === true,
+          } satisfies CleanupWorkspaceRequest,
+        );
+        printResult(env, opts, result, () =>
+          formatWorkspaceCleanup(unwrapRecord(result, "workspace"), result),
         );
       }),
     );
@@ -695,6 +719,18 @@ function formatSessionStopped(
   const id = stringField(record, "id") ?? fallbackId;
   const status = stringField(record, "status");
   return status ? `Session ${id} ${status}` : `Session ${id} stopped`;
+}
+
+function formatWorkspaceCleanup(
+  record: Record<string, unknown> | null,
+  result: unknown,
+): string {
+  const id = stringField(record, "id") ?? "(unknown id)";
+  const status = stringField(record, "status") ?? "unknown";
+  const cleanup = unwrapRecord(result, "cleanup");
+  const deletedFiles =
+    cleanup?.deleted_files === true ? "files deleted" : "files preserved";
+  return `Workspace ${id} ${status}; ${deletedFiles}`;
 }
 
 function formatMessageQueued(record: Record<string, unknown> | null): string {

@@ -50,7 +50,8 @@ The repository currently contains:
 The following work remains open next:
 
 - Document the complete local loop in README (`#11`).
-- Add explicit cleanup/delete workspace endpoints if needed.
+- Workspace cleanup/delete endpoint and CLI command now exist for conservative
+  archive-first cleanup.
 - Broaden real Codex app-server fixture coverage as more live payloads are
   observed.
 - Improve process cleanup behavior for stopped or failed real sessions.

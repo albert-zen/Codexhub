@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { WorkerSessionStatus } from "@codexhub/core";
@@ -124,6 +124,61 @@ describe("Codexhub API", () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("workspace_build_failed");
+  });
+
+  it("archives or deletes workspaces only when no active sessions remain", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "cleanup-demo",
+      default_workspace_root: tempDir,
+    });
+
+    const archivedPath = join(tempDir, "archive-workspace");
+    const archived = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: archivedPath,
+    });
+    const archivedCleanup = await post(
+      `/api/v1/workspaces/${archived.workspace.id}/cleanup`,
+      {},
+    );
+    expect(archivedCleanup.workspace.status).toBe("archived");
+    await expect(access(archivedPath)).resolves.toBeUndefined();
+
+    const deletePath = join(tempDir, "delete-workspace");
+    const deleted = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: deletePath,
+    });
+    await writeFile(join(deletePath, "note.txt"), "delete me", "utf8");
+    const deletedCleanup = await post(
+      `/api/v1/workspaces/${deleted.workspace.id}/cleanup`,
+      { delete_files: true },
+    );
+    expect(deletedCleanup.workspace.status).toBe("deleted");
+    expect(deletedCleanup.cleanup.deleted_files).toBe(true);
+    await expect(access(deletePath)).rejects.toThrow();
+
+    const active = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: join(tempDir, "active-workspace"),
+    });
+    await post("/api/v1/sessions", {
+      workspace_id: active.workspace.id,
+      initial_message: "Keep this workspace active.",
+      codex_options: { fake: true },
+    });
+    const activeCleanup = await app.inject({
+      method: "POST",
+      url: `/api/v1/workspaces/${active.workspace.id}/cleanup`,
+      payload: { delete_files: true },
+    });
+    expect(activeCleanup.statusCode).toBe(409);
+    expect(activeCleanup.json().error.code).toBe(
+      "workspace_has_active_sessions",
+    );
   });
 
   it("reconciles only persisted starting and running sessions on startup", async () => {

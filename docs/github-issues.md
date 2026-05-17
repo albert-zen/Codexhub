@@ -133,6 +133,7 @@ The next small issues created after the first hardening pass are:
 1. `#11 docs(readme): document the full local Codexhub loop`
    - Copy-pasteable server/CLI/fake-worker/result/trace workflow.
 2. `#12 feat(workspace): add safe workspace cleanup flow`
+   - Status: implemented; close after CI is green.
    - Conservative cleanup/delete semantics with path safety tests.
 3. `#13 feat(workspace): add git worktree workspace mode`
    - Isolated write scopes for parallel worker sessions.

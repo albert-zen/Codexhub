@@ -14,6 +14,7 @@ import {
   type SessionListOptions,
 } from "./repository.js";
 import { CodexRuntime } from "./runtime.js";
+import { cleanupWorkspace } from "./workspace-cleanup.js";
 import { buildWorkspace } from "./workspace-builder.js";
 
 export interface CreateServerOptions {
@@ -162,6 +163,40 @@ function registerApiRoutes(
     if (!workspace)
       throw new HttpError(404, "workspace_not_found", "workspace not found");
     return { workspace };
+  });
+
+  app.post(path("/workspaces/:id/cleanup"), async (request) => {
+    const workspace = state.repo.getWorkspace(
+      requiredString(asRecord(request.params), "id"),
+    );
+    if (!workspace)
+      throw new HttpError(404, "workspace_not_found", "workspace not found");
+
+    const activeSessions = state.repo
+      .listSessions({ workspace_id: workspace.id, limit: 100 })
+      .items.filter((session) => !isTerminalStatus(session.status));
+    if (activeSessions.length > 0) {
+      throw new HttpError(
+        409,
+        "workspace_has_active_sessions",
+        "workspace has active sessions",
+      );
+    }
+
+    const deleteFiles =
+      optionalBoolean(asRecord(request.body), "delete_files") === true;
+    try {
+      const cleanup = await cleanupWorkspace(workspace, { deleteFiles });
+      const updated = state.repo.updateWorkspace(workspace.id, {
+        status: cleanup.status,
+        last_error: null,
+      });
+      return { workspace: updated, cleanup };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      state.repo.updateWorkspace(workspace.id, { last_error: message });
+      throw new HttpError(400, "workspace_cleanup_failed", message);
+    }
   });
 
   app.post(path("/sessions"), async (request) => {

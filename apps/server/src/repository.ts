@@ -174,6 +174,27 @@ export class HubRepository {
     return row ? workspaceFromRow(row) : null;
   }
 
+  updateWorkspace(
+    id: string,
+    fields: Partial<Pick<Workspace, "status" | "last_error">>,
+  ): Workspace {
+    const entries = Object.entries(fields).filter(
+      ([, value]) => value !== undefined,
+    );
+    if (entries.length === 0) return this.requireWorkspace(id);
+
+    const assignments = entries.map(([key]) => `${key} = ?`).join(", ");
+    const values = entries.map(([, value]) => value);
+    const updatedAt = isoNow();
+
+    this.db
+      .prepare(
+        `UPDATE workspaces SET ${assignments}, updated_at = ? WHERE id = ?`,
+      )
+      .run(...values, updatedAt, id);
+    return this.requireWorkspace(id);
+  }
+
   createSession(input: CreateSessionInput): WorkerSession {
     const now = isoNow();
     const session: WorkerSession = {
@@ -576,6 +597,12 @@ export class HubRepository {
     const session = this.getSession(id);
     if (!session) throw new Error(`session not found: ${id}`);
     return session;
+  }
+
+  private requireWorkspace(id: string): Workspace {
+    const workspace = this.getWorkspace(id);
+    if (!workspace) throw new Error(`workspace not found: ${id}`);
+    return workspace;
   }
 
   private requireMessage(id: string): import("@codexhub/core").Message {

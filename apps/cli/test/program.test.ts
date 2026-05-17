@@ -127,6 +127,40 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("cleans up workspaces with explicit file deletion opt-in", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          workspace: { id: "work_1", status: "deleted" },
+          cleanup: { deleted_files: true },
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "workspace",
+      "cleanup",
+      "work_1",
+      "--delete-files",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/workspaces/work_1/cleanup");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      delete_files: true,
+    });
+    expect(output.join("").trim()).toBe(
+      "Workspace work_1 deleted; files deleted",
+    );
+  });
+
   it("prints readable recent traces with bounded item windows", async () => {
     const calls: string[] = [];
     const output: string[] = [];

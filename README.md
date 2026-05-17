@@ -41,10 +41,15 @@ pnpm --filter @codexhub/cli dev -- session trace $Session.session.id --limit 20
 pnpm --filter @codexhub/cli dev -- session items $Session.session.id --type agentmessage --limit 20 --json
 pnpm --filter @codexhub/cli dev -- session send $Session.session.id --mode continue --message "Please continue your work and report the next result." --json
 pnpm --filter @codexhub/cli dev -- session watch $Session.session.id --limit 20
+pnpm --filter @codexhub/cli dev -- workspace cleanup $Workspace.workspace.id --json
 ```
 
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.
+
+Workspace cleanup archives the workspace record by default. Add `--delete-files`
+only when you want Codexhub to remove the workspace directory after safety
+checks.
 
 ## API routes
 

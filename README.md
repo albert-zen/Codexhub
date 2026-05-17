@@ -27,11 +27,31 @@ The GUI defaults to `http://127.0.0.1:4318`.
 
 ## CLI example
 
+The CLI defaults to `http://127.0.0.1:4317`. Use `--json` for Manager Agent
+calls and omit it for human-readable output.
+
 ```powershell
-pnpm --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json
-pnpm --filter @codexhub/cli dev -- workspace create --project <project_id> --source local --path D:\desktop\Codexhub-workspaces\demo --json
-pnpm --filter @codexhub/cli dev -- session start --project <project_id> --workspace <workspace_id> --message "Inspect this workspace." --codex-options "{\"fake\":true}" --json
-pnpm --filter @codexhub/cli dev -- session latest <session_id>
-pnpm --filter @codexhub/cli dev -- session items <session_id> --type agentmessage --limit 20 --json
-pnpm --filter @codexhub/cli dev -- session send <session_id> --mode continue --message "Continue with the next step." --json
+$Project = pnpm --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json | ConvertFrom-Json
+$Workspace = pnpm --filter @codexhub/cli dev -- workspace create --project $Project.project.id --source local --path D:\desktop\Codexhub-workspaces\demo --json | ConvertFrom-Json
+$Session = pnpm --filter @codexhub/cli dev -- session start --project $Project.project.id --workspace $Workspace.workspace.id --message "Inspect this workspace and report status." --codex-options "{\"fake\":true}" --json | ConvertFrom-Json
+
+pnpm --filter @codexhub/cli dev -- session latest $Session.session.id
+pnpm --filter @codexhub/cli dev -- session result $Session.session.id
+pnpm --filter @codexhub/cli dev -- session trace $Session.session.id --limit 20
+pnpm --filter @codexhub/cli dev -- session items $Session.session.id --type agentmessage --limit 20 --json
+pnpm --filter @codexhub/cli dev -- session send $Session.session.id --mode continue --message "Please continue your work and report the next result." --json
+pnpm --filter @codexhub/cli dev -- session watch $Session.session.id --limit 20
 ```
+
+`continue` messages must include explicit content. Codexhub does not treat an
+empty message as an instruction to proceed.
+
+## API routes
+
+`/api/v1` is the canonical HTTP API prefix. Root routes such as `/sessions`
+remain supported local aliases for the CLI and GUI.
+
+## Current non-goals
+
+Codexhub v1 is a local worker control plane. It does not implement escalation,
+validation gates, context compilation, or deep Linear/GitHub issue binding.

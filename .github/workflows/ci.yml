@@ -8,13 +8,15 @@ on:
 
 jobs:
   quality:
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10.33.4
 

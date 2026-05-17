@@ -53,12 +53,26 @@ describe("Codexhub API", () => {
     const started = await post("/api/v1/sessions", {
       workspace_id: workspace.workspace.id,
       initial_message: "Inspect this repo and report status.",
+      task_spec: {
+        ref: "docs/task-specs/demo.md",
+        title: "Inspect demo workspace",
+        intent: "Verify task spec metadata persistence.",
+        acceptance_criteria: "Session detail returns task_spec.",
+      },
       codex_options: { fake: true },
     });
     const sessionId = started.session.id;
 
     expect(started.session.status).toBe("awaiting_input");
     expect(started.session.last_agent_message).toContain("Inspect this repo");
+
+    const inspected = await get(`/api/v1/sessions/${sessionId}`);
+    expect(inspected.task_spec).toMatchObject({
+      ref: "docs/task-specs/demo.md",
+      title: "Inspect demo workspace",
+      intent: "Verify task spec metadata persistence.",
+      acceptance_criteria: "Session detail returns task_spec.",
+    });
 
     const latest = await get(`/api/v1/sessions/${sessionId}/items/latest`);
     expect(latest.item.type).toBe("agentmessage");

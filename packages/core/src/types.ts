@@ -81,6 +81,17 @@ export interface WorkerSession {
   updated_at: string;
 }
 
+export interface TaskSpecMetadata {
+  session_id: ID;
+  ref: string | null;
+  title: string | null;
+  intent: string | null;
+  scope: string | null;
+  acceptance_criteria: string | null;
+  raw: string | null;
+  created_at: string;
+}
+
 export interface Item {
   id: ID;
   session_id: ID;

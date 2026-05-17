@@ -141,6 +141,7 @@ The next small issues created after the first hardening pass are:
    - Status: implemented; close after CI is green.
    - Load transcript windows without rereading the first 200 items.
 5. `#15 feat(session): attach task spec metadata to worker sessions`
+   - Status: implemented; close after CI is green.
    - Persist immutable task intent/scope/acceptance criteria references.
 6. `#16 feat(control-plane): add minimal worker run groups`
    - Observe coordinated batches without becoming a project management system.

@@ -10,6 +10,7 @@ import { isTerminalStatus } from "@codexhub/core";
 import { openDatabase, type CodexHubDatabase } from "./database.js";
 import {
   HubRepository,
+  type CreateTaskSpecInput,
   type ItemPageOptions,
   type SessionListOptions,
   type UpdateReviewGateStatusInput,
@@ -225,6 +226,10 @@ function registerApiRoutes(
       project_id: project.id,
       workspace_id: workspace.id,
     });
+    const taskSpec = parseTaskSpec(optionalRecord(body, "task_spec"));
+    if (taskSpec) {
+      state.repo.createTaskSpec({ session_id: session.id, ...taskSpec });
+    }
     const message = state.repo.createMessage({
       session_id: session.id,
       mode: "initial",
@@ -268,7 +273,8 @@ function registerApiRoutes(
     );
     const workspace =
       state.repo.getWorkspace(session.workspace_id) ?? undefined;
-    return { session, workspace };
+    const task_spec = state.repo.getTaskSpec(session.id);
+    return { session, workspace, task_spec };
   });
 
   app.post(path("/sessions/:id/messages"), async (request) => {
@@ -464,6 +470,16 @@ function asRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+function optionalRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | null {
+  const value = record[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function requiredString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value === "string" && value.trim() !== "") return value;
@@ -587,4 +603,32 @@ function parseReviewGateStatusUpdate(
     update.note = value;
   }
   return update;
+}
+
+function parseTaskSpec(
+  record: Record<string, unknown> | null,
+): Omit<CreateTaskSpecInput, "session_id"> | null {
+  if (!record) return null;
+  const taskSpec = {
+    ref: optionalNullableString(record, "ref"),
+    title: optionalNullableString(record, "title"),
+    intent: optionalNullableString(record, "intent"),
+    scope: optionalNullableString(record, "scope"),
+    acceptance_criteria: optionalNullableString(record, "acceptance_criteria"),
+    raw: optionalNullableString(record, "raw"),
+  };
+  const hasValue = Object.values(taskSpec).some(
+    (value) => typeof value === "string" && value.trim() !== "",
+  );
+  return hasValue ? taskSpec : null;
+}
+
+function optionalNullableString(
+  record: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = record[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") return value;
+  throw new HttpError(400, "invalid_task_spec", `${key} must be string`);
 }

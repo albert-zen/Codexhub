@@ -124,6 +124,22 @@ const migrations: Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 3,
+    name: "session_task_specs",
+    sql: `
+      CREATE TABLE session_task_specs (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        ref TEXT,
+        title TEXT,
+        intent TEXT,
+        scope TEXT,
+        acceptance_criteria TEXT,
+        raw TEXT,
+        created_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

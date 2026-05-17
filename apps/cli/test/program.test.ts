@@ -95,6 +95,49 @@ describe("codexhub commands", () => {
     );
   });
 
+  it("starts sessions with task spec metadata", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({ session: { id: "sess_1", status: "starting" } });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "start",
+      "--project",
+      "proj_1",
+      "--workspace",
+      "work_1",
+      "--task-spec-ref",
+      "docs/task-specs/demo.md",
+      "--task-spec-title",
+      "Demo task",
+      "--task-spec-intent",
+      "Prove metadata capture.",
+      "Start from this spec.",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/sessions");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      project_id: "proj_1",
+      workspace_id: "work_1",
+      initial_message: "Start from this spec.",
+      task_spec: {
+        ref: "docs/task-specs/demo.md",
+        title: "Demo task",
+        intent: "Prove metadata capture.",
+      },
+    });
+  });
+
   it("sends follow-up messages", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const program = createProgram({

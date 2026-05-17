@@ -7,6 +7,7 @@ import type {
   Project,
   ReviewGateStatus,
   SenderType,
+  TaskSpecMetadata,
   WorkerSession,
   Workspace,
   WorkerSessionStatus,
@@ -48,7 +49,17 @@ export interface StartSessionRequest {
   project_id?: string | null | undefined;
   prompt?: string | undefined;
   initial_message?: string | undefined;
+  task_spec?: CreateTaskSpecMetadataRequest | null | undefined;
   codex_options?: unknown | undefined;
+}
+
+export interface CreateTaskSpecMetadataRequest {
+  ref?: string | null | undefined;
+  title?: string | null | undefined;
+  intent?: string | null | undefined;
+  scope?: string | null | undefined;
+  acceptance_criteria?: string | null | undefined;
+  raw?: string | null | undefined;
 }
 
 export interface SendMessageRequest {
@@ -110,6 +121,7 @@ export interface WorkspaceCleanupResponse {
 export interface SessionResponse {
   session: WorkerSession;
   workspace?: Workspace;
+  task_spec?: TaskSpecMetadata | null;
 }
 
 export interface ItemListResponse extends Page<Item> {

@@ -7,6 +7,7 @@ import type {
   Message,
   MessageMode,
   Project,
+  TaskSpecMetadata,
   WorkerSession,
   WorkerSessionStatus,
 } from "@codexhub/core";
@@ -19,6 +20,11 @@ interface ItemPage {
   next_cursor: string | null;
   limit: number;
   type: string;
+}
+
+interface SessionDetail {
+  session: WorkerSession;
+  task_spec: TaskSpecMetadata | null;
 }
 
 type TranscriptEntry =
@@ -166,11 +172,17 @@ async function fetchSessions(projectId: ID): Promise<WorkerSession[]> {
   return listFrom<WorkerSession>(body, "sessions");
 }
 
-async function fetchSession(sessionId: ID): Promise<WorkerSession> {
+async function fetchSession(sessionId: ID): Promise<SessionDetail> {
   const body = await request<unknown>(
     `/sessions/${encodeURIComponent(sessionId)}`,
   );
-  return entityFrom<WorkerSession>(body, "session");
+  return {
+    session: entityFrom<WorkerSession>(body, "session"),
+    task_spec:
+      isObject(body) && isObject(body.task_spec)
+        ? (body.task_spec as unknown as TaskSpecMetadata)
+        : null,
+  };
 }
 
 async function fetchItems(
@@ -425,6 +437,7 @@ function App() {
   const [selectedSession, setSelectedSession] = useState<WorkerSession | null>(
     null,
   );
+  const [taskSpec, setTaskSpec] = useState<TaskSpecMetadata | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [itemAfter, setItemAfter] = useState<number | null>(null);
   const [itemHistory, setItemHistory] = useState<number[]>([]);
@@ -508,17 +521,20 @@ function App() {
       setLoadingDetail(true);
       setError(null);
       try {
-        const [nextSession, nextItemPage, nextMessages] = await Promise.all([
-          fetchSession(sessionId),
-          fetchItems(sessionId, type, afterSequence),
-          fetchMessages(sessionId),
-        ]);
-        setSelectedSession(nextSession);
+        const [nextSessionDetail, nextItemPage, nextMessages] =
+          await Promise.all([
+            fetchSession(sessionId),
+            fetchItems(sessionId, type, afterSequence),
+            fetchMessages(sessionId),
+          ]);
+        setSelectedSession(nextSessionDetail.session);
+        setTaskSpec(nextSessionDetail.task_spec);
         setItems(nextItemPage.items);
         setItemNextCursor(nextItemPage.next_cursor);
         setMessages(nextMessages);
       } catch (loadError) {
         setSelectedSession(null);
+        setTaskSpec(null);
         setItems([]);
         setItemNextCursor(null);
         setMessages([]);
@@ -559,6 +575,7 @@ function App() {
   useEffect(() => {
     if (!selectedSessionId) {
       setSelectedSession(null);
+      setTaskSpec(null);
       setItems([]);
       setItemAfter(null);
       setItemHistory([]);
@@ -763,6 +780,16 @@ function App() {
                 </div>
                 <p>{compactText(latestAgentMessage)}</p>
               </section>
+
+              {taskSpec ? (
+                <section className="latest-block" aria-label="Task spec">
+                  <div className="section-heading">
+                    <h3>Task Spec</h3>
+                    <span>{taskSpec.ref ?? "snapshot"}</span>
+                  </div>
+                  <p>{compactText(taskSpec.title ?? taskSpec.intent)}</p>
+                </section>
+              ) : null}
 
               <section className="composer" aria-label="Send session message">
                 <textarea

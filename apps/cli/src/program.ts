@@ -60,6 +60,12 @@ interface SessionStartOptions extends BaseCommandOptions {
   message?: string;
   prompt?: string;
   file?: string;
+  taskSpecRef?: string;
+  taskSpecTitle?: string;
+  taskSpecIntent?: string;
+  taskSpecScope?: string;
+  taskSpecAcceptance?: string;
+  taskSpecFile?: string;
   codexOptions?: string;
 }
 
@@ -215,6 +221,12 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .option("-m, --message <text>", "Initial message")
     .option("--prompt <text>", "Initial prompt")
     .option("--file <path>", "Read initial message from a file")
+    .option("--task-spec-ref <ref>", "Task spec path or external reference")
+    .option("--task-spec-title <title>", "Task spec title")
+    .option("--task-spec-intent <text>", "Task spec intent")
+    .option("--task-spec-scope <text>", "Task spec scope")
+    .option("--task-spec-acceptance <text>", "Task spec acceptance criteria")
+    .option("--task-spec-file <path>", "Read raw task spec snapshot")
     .option("--codex-options <json>", "Session Codex options as JSON")
     .argument("[message...]", "Initial message")
     .action((messageParts: string[], opts: SessionStartOptions) =>
@@ -225,10 +237,23 @@ export function createProgram(env: CliEnvironment = {}): Command {
           opts.file,
           messageParts,
         );
+        const taskSpecRaw = opts.taskSpecFile
+          ? await (env.readFile ?? readFile)(opts.taskSpecFile, "utf8")
+          : undefined;
         const body = omitUndefined<StartSessionRequest>({
           project_id: opts.project,
           workspace_id: opts.workspace,
           initial_message: initialMessage,
+          task_spec: taskSpecRaw
+            ? omitUndefined({
+                ref: opts.taskSpecRef,
+                title: opts.taskSpecTitle,
+                intent: opts.taskSpecIntent,
+                scope: opts.taskSpecScope,
+                acceptance_criteria: opts.taskSpecAcceptance,
+                raw: taskSpecRaw,
+              })
+            : taskSpecFromOptions(opts),
           codex_options: parseJsonOption(opts.codexOptions, "--codex-options"),
         });
         const result = await client(program, env).post("/sessions", body);
@@ -246,7 +271,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
           `/sessions/${encodeURIComponent(sessionId)}`,
         );
         printResult(env, opts, result, () =>
-          formatSessionInspect(unwrapRecord(result, "session")),
+          formatSessionInspectResult(result),
         );
       }),
     );
@@ -654,6 +679,19 @@ function parseJsonOption(
   }
 }
 
+function taskSpecFromOptions(
+  opts: SessionStartOptions,
+): JsonObject | undefined {
+  const taskSpec = omitUndefined({
+    ref: opts.taskSpecRef,
+    title: opts.taskSpecTitle,
+    intent: opts.taskSpecIntent,
+    scope: opts.taskSpecScope,
+    acceptance_criteria: opts.taskSpecAcceptance,
+  });
+  return Object.keys(taskSpec).length > 0 ? taskSpec : undefined;
+}
+
 function parsePositiveInt(value: string): number {
   return parseInteger(value, 1);
 }
@@ -803,6 +841,19 @@ function formatReviewStatus(value: unknown): string {
     .join(" ");
   const note = stringField(record, "note");
   return note ? `${flags}\nnote: ${note}` : flags;
+}
+
+function formatSessionInspectResult(value: unknown): string {
+  const sessionText = formatSessionInspect(unwrapRecord(value, "session"));
+  const taskSpec = unwrapRecord(value, "task_spec");
+  if (!taskSpec) return sessionText;
+  const details = [
+    stringField(taskSpec, "title"),
+    stringField(taskSpec, "ref"),
+  ].filter((entry): entry is string => Boolean(entry));
+  return details.length > 0
+    ? `${sessionText}\nTask spec: ${details.join(" - ")}`
+    : `${sessionText}\nTask spec: attached`;
 }
 
 function formatSessionInspect(record: Record<string, unknown> | null): string {

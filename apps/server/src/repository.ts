@@ -7,6 +7,7 @@ import {
   type Project,
   type ReviewGateStatus,
   type SenderType,
+  type TaskSpecMetadata,
   type WorkerSession,
   type Workspace,
 } from "@codexhub/core";
@@ -35,6 +36,16 @@ export interface CreateWorkspaceInput {
 export interface CreateSessionInput {
   project_id: string;
   workspace_id: string;
+}
+
+export interface CreateTaskSpecInput {
+  session_id: string;
+  ref?: string | null;
+  title?: string | null;
+  intent?: string | null;
+  scope?: string | null;
+  acceptance_criteria?: string | null;
+  raw?: string | null;
 }
 
 export interface CreateMessageInput {
@@ -355,6 +366,37 @@ export class HubRepository {
     return this.requireSession(id);
   }
 
+  createTaskSpec(input: CreateTaskSpecInput): TaskSpecMetadata {
+    this.requireSession(input.session_id);
+    const now = isoNow();
+    this.db
+      .prepare(
+        `INSERT INTO session_task_specs (
+          session_id, ref, title, intent, scope, acceptance_criteria, raw,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(session_id) DO NOTHING`,
+      )
+      .run(
+        input.session_id,
+        input.ref ?? null,
+        input.title ?? null,
+        input.intent ?? null,
+        input.scope ?? null,
+        input.acceptance_criteria ?? null,
+        input.raw ?? null,
+        now,
+      );
+    return this.requireTaskSpec(input.session_id);
+  }
+
+  getTaskSpec(sessionId: string): TaskSpecMetadata | null {
+    const row = this.db
+      .prepare("SELECT * FROM session_task_specs WHERE session_id = ?")
+      .get(sessionId);
+    return row ? taskSpecFromRow(row) : null;
+  }
+
   createMessage(input: CreateMessageInput): import("@codexhub/core").Message {
     const now = isoNow();
     const message = {
@@ -672,6 +714,12 @@ export class HubRepository {
     return workspace;
   }
 
+  private requireTaskSpec(sessionId: string): TaskSpecMetadata {
+    const taskSpec = this.getTaskSpec(sessionId);
+    if (!taskSpec) throw new Error(`task spec not found: ${sessionId}`);
+    return taskSpec;
+  }
+
   private requireMessage(id: string): import("@codexhub/core").Message {
     const row = this.db
       .prepare("SELECT * FROM messages WHERE id = ? LIMIT 1")
@@ -773,6 +821,20 @@ function sessionFromRow(row: unknown): WorkerSession {
     ended_at: string(record, "ended_at"),
     created_at: requiredString(record, "created_at"),
     updated_at: requiredString(record, "updated_at"),
+  };
+}
+
+function taskSpecFromRow(row: unknown): TaskSpecMetadata {
+  const record = asRow(row);
+  return {
+    session_id: requiredString(record, "session_id"),
+    ref: string(record, "ref"),
+    title: string(record, "title"),
+    intent: string(record, "intent"),
+    scope: string(record, "scope"),
+    acceptance_criteria: string(record, "acceptance_criteria"),
+    raw: string(record, "raw"),
+    created_at: requiredString(record, "created_at"),
   };
 }
 

@@ -33,7 +33,7 @@ calls and omit it for human-readable output.
 ```powershell
 $Project = pnpm --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json | ConvertFrom-Json
 $Workspace = pnpm --filter @codexhub/cli dev -- workspace create --project $Project.project.id --source local --path D:\desktop\Codexhub-workspaces\demo --json | ConvertFrom-Json
-$Session = pnpm --filter @codexhub/cli dev -- session start --project $Project.project.id --workspace $Workspace.workspace.id --message "Inspect this workspace and report status." --codex-options "{\"fake\":true}" --json | ConvertFrom-Json
+$Session = pnpm --filter @codexhub/cli dev -- session start --project $Project.project.id --workspace $Workspace.workspace.id --message "Inspect this workspace and report status." --task-spec-ref docs/task-specs/demo.md --task-spec-title "Demo workspace inspection" --codex-options "{\"fake\":true}" --json | ConvertFrom-Json
 
 pnpm --filter @codexhub/cli dev -- session latest $Session.session.id
 pnpm --filter @codexhub/cli dev -- session result $Session.session.id
@@ -54,6 +54,10 @@ checks.
 
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
+
+Task spec metadata is an immutable input snapshot or reference stored on session
+start. Workers should execute from it, not edit it, unless the assigned task is
+explicitly documentation work.
 
 ## API routes
 

@@ -60,8 +60,9 @@ The following work remains open next:
 - Add worktree-aware workspace creation for parallel worker sessions (`#13`).
 - Web transcript pagination now exposes bounded item windows and previous/next
   navigation.
-- Add task spec metadata and minimal run groups so large batches can be
-  observed without becoming project management (`#15`, `#16`).
+- Task spec metadata can now be attached when a session starts; minimal run
+  groups remain next so large batches can be observed without becoming project
+  management (`#16`).
 - Review-gate status metadata now tracks worker/reviewer progress as
   observability, not validation.
 - Define and automate task-spec, worker, review-subagent, and quality-gate

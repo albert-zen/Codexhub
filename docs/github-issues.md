@@ -144,6 +144,7 @@ The next small issues created after the first hardening pass are:
    - Status: implemented; close after CI is green.
    - Persist immutable task intent/scope/acceptance criteria references.
 6. `#16 feat(control-plane): add minimal worker run groups`
+   - Status: implemented; close after CI is green.
    - Observe coordinated batches without becoming a project management system.
 7. `#17 ci(repo): address GitHub Actions runtime warnings`
    - Handle Node 24 action runtime and Windows runner transition notices.

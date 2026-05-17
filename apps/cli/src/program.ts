@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { Command, InvalidArgumentError } from "commander";
 import type {
   CreateProjectRequest,
+  CreateRunGroupRequest,
   CreateWorkspaceRequest,
   CleanupWorkspaceRequest,
   ItemListQuery,
@@ -52,6 +53,20 @@ interface WorkspaceCreateOptions extends BaseCommandOptions {
 
 interface WorkspaceCleanupOptions extends BaseCommandOptions {
   deleteFiles?: boolean;
+}
+
+interface RunGroupCreateOptions extends BaseCommandOptions {
+  name: string;
+  project?: string;
+  purpose?: string;
+}
+
+interface RunGroupsListOptions extends BaseCommandOptions {
+  project?: string;
+}
+
+interface RunGroupAddSessionOptions extends BaseCommandOptions {
+  session: string;
 }
 
 interface SessionStartOptions extends BaseCommandOptions {
@@ -166,6 +181,78 @@ export function createProgram(env: CliEnvironment = {}): Command {
       }),
     );
   program.addCommand(project);
+
+  const runGroup = new Command("run-group").description("Manage a run group");
+  jsonOption(runGroup.command("create").description("Create a run group"))
+    .requiredOption("--name <name>", "Run group name")
+    .option("--project <id>", "Project ID")
+    .option("--purpose <text>", "Run group purpose")
+    .action((opts: RunGroupCreateOptions) =>
+      runAction(env, opts, async () => {
+        const body = omitUndefined<CreateRunGroupRequest>({
+          name: opts.name,
+          project_id: opts.project,
+          purpose: opts.purpose,
+        });
+        const result = await client(program, env).post("/run-groups", body);
+        printResult(env, opts, result, () =>
+          formatRunGroup(unwrapRecord(result, "run_group")),
+        );
+      }),
+    );
+  jsonOption(runGroup.command("inspect").description("Inspect a run group"))
+    .argument("<run-group-id>", "Run group ID")
+    .action((runGroupId: string, opts: BaseCommandOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/run-groups/${encodeURIComponent(runGroupId)}`,
+        );
+        printResult(env, opts, result, () =>
+          formatRunGroup(unwrapRecord(result, "run_group")),
+        );
+      }),
+    );
+  jsonOption(runGroup.command("add-session").description("Add session"))
+    .argument("<run-group-id>", "Run group ID")
+    .requiredOption("--session <id>", "Session ID")
+    .action((runGroupId: string, opts: RunGroupAddSessionOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).post(
+          `/run-groups/${encodeURIComponent(runGroupId)}/sessions`,
+          { session_id: opts.session },
+        );
+        printResult(
+          env,
+          opts,
+          result,
+          () => formatSessions(result) || "Session added.",
+        );
+      }),
+    );
+  jsonOption(runGroup.command("sessions").description("List sessions"))
+    .argument("<run-group-id>", "Run group ID")
+    .action((runGroupId: string, opts: BaseCommandOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/run-groups/${encodeURIComponent(runGroupId)}/sessions`,
+        );
+        printResult(env, opts, result, () => formatSessions(result));
+      }),
+    );
+  program.addCommand(runGroup);
+
+  const runGroups = new Command("run-groups").description("List run groups");
+  jsonOption(runGroups.command("list").description("List run groups"))
+    .option("--project <id>", "Project ID filter")
+    .action((opts: RunGroupsListOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get("/run-groups", {
+          query: omitQuery({ project_id: opts.project }),
+        });
+        printResult(env, opts, result, () => formatRunGroups(result));
+      }),
+    );
+  program.addCommand(runGroups);
 
   const workspace = new Command("workspace").description("Manage workspaces");
   jsonOption(workspace.command("create").description("Create a workspace"))
@@ -821,6 +908,14 @@ function formatWorkspaceCleanup(
   return `Workspace ${id} ${status}; ${deletedFiles}`;
 }
 
+function formatRunGroup(record: Record<string, unknown> | null): string {
+  if (!record) return "Run group not found.";
+  const id = stringField(record, "id") ?? "(unknown id)";
+  const name = stringField(record, "name") ?? "(unnamed)";
+  const purpose = stringField(record, "purpose");
+  return purpose ? `${id} ${name} - ${purpose}` : `${id} ${name}`;
+}
+
 function formatMessageQueued(record: Record<string, unknown> | null): string {
   const id = stringField(record, "id") ?? "(unknown id)";
   const status = stringField(record, "status");
@@ -1063,6 +1158,12 @@ function formatSessions(value: unknown): string {
       return latest ? `${base} latest="${oneLine(latest, 120)}"` : base;
     })
     .join("\n");
+}
+
+function formatRunGroups(value: unknown): string {
+  const runGroups = extractItems(value, "run_groups");
+  if (runGroups.length === 0) return "No run groups.";
+  return runGroups.map(formatRunGroup).join("\n");
 }
 
 function extractItems(

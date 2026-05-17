@@ -61,6 +61,15 @@ export interface Workspace {
   updated_at: string;
 }
 
+export interface RunGroup {
+  id: ID;
+  project_id: ID | null;
+  name: string;
+  purpose: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WorkerSession {
   id: ID;
   project_id: ID;

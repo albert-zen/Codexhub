@@ -140,6 +140,31 @@ const migrations: Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 4,
+    name: "run_groups",
+    sql: `
+      CREATE TABLE run_groups (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+        name TEXT NOT NULL,
+        purpose TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE INDEX idx_run_groups_project_id ON run_groups(project_id);
+
+      CREATE TABLE run_group_sessions (
+        run_group_id TEXT NOT NULL REFERENCES run_groups(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (run_group_id, session_id)
+      ) STRICT;
+
+      CREATE INDEX idx_run_group_sessions_session_id ON run_group_sessions(session_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

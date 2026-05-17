@@ -6,6 +6,7 @@ import {
   type MessageMode,
   type Project,
   type ReviewGateStatus,
+  type RunGroup,
   type SenderType,
   type TaskSpecMetadata,
   type WorkerSession,
@@ -31,6 +32,12 @@ export interface CreateWorkspaceInput {
   commit_sha?: string | null;
   status?: Workspace["status"];
   last_error?: string | null;
+}
+
+export interface CreateRunGroupInput {
+  name: string;
+  project_id?: string | null;
+  purpose?: string | null;
 }
 
 export interface CreateSessionInput {
@@ -134,6 +141,80 @@ export class HubRepository {
       .prepare("SELECT * FROM projects WHERE id = ? OR name = ? LIMIT 1")
       .get(idOrName, idOrName);
     return row ? projectFromRow(row) : null;
+  }
+
+  createRunGroup(input: CreateRunGroupInput): RunGroup {
+    const now = isoNow();
+    const runGroup: RunGroup = {
+      id: id("run"),
+      project_id: input.project_id ?? null,
+      name: input.name,
+      purpose: input.purpose ?? null,
+      created_at: now,
+      updated_at: now,
+    };
+    this.db
+      .prepare(
+        `INSERT INTO run_groups (
+          id, project_id, name, purpose, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        runGroup.id,
+        runGroup.project_id,
+        runGroup.name,
+        runGroup.purpose,
+        runGroup.created_at,
+        runGroup.updated_at,
+      );
+    return runGroup;
+  }
+
+  listRunGroups(projectId?: string | null): RunGroup[] {
+    const sql = projectId
+      ? "SELECT * FROM run_groups WHERE project_id = ? ORDER BY updated_at DESC"
+      : "SELECT * FROM run_groups ORDER BY updated_at DESC";
+    const rows = projectId
+      ? this.db.prepare(sql).all(projectId)
+      : this.db.prepare(sql).all();
+    return rows.map(runGroupFromRow);
+  }
+
+  getRunGroup(id: string): RunGroup | null {
+    const row = this.db
+      .prepare("SELECT * FROM run_groups WHERE id = ? LIMIT 1")
+      .get(id);
+    return row ? runGroupFromRow(row) : null;
+  }
+
+  addSessionToRunGroup(runGroupId: string, sessionId: string): void {
+    this.requireRunGroup(runGroupId);
+    this.requireSession(sessionId);
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO run_group_sessions (
+          run_group_id, session_id, created_at
+        ) VALUES (?, ?, ?)`,
+      )
+      .run(runGroupId, sessionId, isoNow());
+    this.db
+      .prepare("UPDATE run_groups SET updated_at = ? WHERE id = ?")
+      .run(isoNow(), runGroupId);
+  }
+
+  listRunGroupSessions(runGroupId: string): WorkerSession[] {
+    this.requireRunGroup(runGroupId);
+    return this.db
+      .prepare(
+        `SELECT worker_sessions.*
+         FROM worker_sessions
+         INNER JOIN run_group_sessions
+           ON worker_sessions.id = run_group_sessions.session_id
+         WHERE run_group_sessions.run_group_id = ?
+         ORDER BY run_group_sessions.created_at ASC`,
+      )
+      .all(runGroupId)
+      .map(sessionFromRow);
   }
 
   createWorkspace(input: CreateWorkspaceInput): Workspace {
@@ -714,6 +795,12 @@ export class HubRepository {
     return workspace;
   }
 
+  private requireRunGroup(id: string): RunGroup {
+    const runGroup = this.getRunGroup(id);
+    if (!runGroup) throw new Error(`run group not found: ${id}`);
+    return runGroup;
+  }
+
   private requireTaskSpec(sessionId: string): TaskSpecMetadata {
     const taskSpec = this.getTaskSpec(sessionId);
     if (!taskSpec) throw new Error(`task spec not found: ${sessionId}`);
@@ -796,6 +883,18 @@ function workspaceFromRow(row: unknown): Workspace {
     commit_sha: string(record, "commit_sha"),
     status: requiredString(record, "status") as Workspace["status"],
     last_error: string(record, "last_error"),
+    created_at: requiredString(record, "created_at"),
+    updated_at: requiredString(record, "updated_at"),
+  };
+}
+
+function runGroupFromRow(row: unknown): RunGroup {
+  const record = asRow(row);
+  return {
+    id: requiredString(record, "id"),
+    project_id: string(record, "project_id"),
+    name: requiredString(record, "name"),
+    purpose: string(record, "purpose"),
     created_at: requiredString(record, "created_at"),
     updated_at: requiredString(record, "updated_at"),
   };

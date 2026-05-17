@@ -74,6 +74,25 @@ describe("Codexhub API", () => {
       acceptance_criteria: "Session detail returns task_spec.",
     });
 
+    const runGroup = await post("/api/v1/run-groups", {
+      name: "parallel-demo",
+      project_id: projectId,
+      purpose: "Observe a batch of workers.",
+    });
+    expect(runGroup.run_group.name).toBe("parallel-demo");
+
+    const runGroupMembership = await post(
+      `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+      { session_id: sessionId },
+    );
+    expect(runGroupMembership.sessions).toHaveLength(1);
+    expect(runGroupMembership.sessions[0].id).toBe(sessionId);
+
+    const runGroupSessions = await get(
+      `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+    );
+    expect(runGroupSessions.sessions[0].id).toBe(sessionId);
+
     const latest = await get(`/api/v1/sessions/${sessionId}/items/latest`);
     expect(latest.item.type).toBe("agentmessage");
     expect(latest.item.raw_payload.method).toBe("item/completed");

@@ -119,6 +119,60 @@ function registerApiRoutes(
     return { ...page, sessions: page.items };
   });
 
+  app.post(path("/run-groups"), async (request) => {
+    const body = asRecord(request.body);
+    const projectId = optionalString(body, "project_id");
+    if (projectId && !state.repo.getProject(projectId))
+      throw new HttpError(404, "project_not_found", "project not found");
+    const runGroup = state.repo.createRunGroup({
+      name: requiredString(body, "name"),
+      project_id: projectId,
+      purpose: optionalString(body, "purpose"),
+    });
+    return { run_group: runGroup };
+  });
+
+  app.get(path("/run-groups"), async (request) => {
+    const query = asRecord(request.query);
+    const items = state.repo.listRunGroups(optionalString(query, "project_id"));
+    return {
+      items,
+      run_groups: items,
+      next_cursor: null,
+      limit: items.length,
+    };
+  });
+
+  app.get(path("/run-groups/:id"), async (request) => {
+    const runGroup = state.repo.getRunGroup(
+      requiredString(asRecord(request.params), "id"),
+    );
+    if (!runGroup)
+      throw new HttpError(404, "run_group_not_found", "run group not found");
+    return { run_group: runGroup };
+  });
+
+  app.post(path("/run-groups/:id/sessions"), async (request) => {
+    const id = requiredString(asRecord(request.params), "id");
+    if (!state.repo.getRunGroup(id))
+      throw new HttpError(404, "run_group_not_found", "run group not found");
+    const sessionId = requiredString(asRecord(request.body), "session_id");
+    requireSession(state.repo, sessionId);
+    state.repo.addSessionToRunGroup(id, sessionId);
+    return {
+      run_group: state.repo.getRunGroup(id),
+      sessions: state.repo.listRunGroupSessions(id),
+    };
+  });
+
+  app.get(path("/run-groups/:id/sessions"), async (request) => {
+    const id = requiredString(asRecord(request.params), "id");
+    if (!state.repo.getRunGroup(id))
+      throw new HttpError(404, "run_group_not_found", "run group not found");
+    const items = state.repo.listRunGroupSessions(id);
+    return { items, sessions: items, next_cursor: null, limit: items.length };
+  });
+
   app.post(path("/workspaces"), async (request) => {
     const body = asRecord(request.body);
     const projectId =

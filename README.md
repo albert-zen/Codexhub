@@ -41,6 +41,8 @@ pnpm --filter @codexhub/cli dev -- session trace $Session.session.id --limit 20
 pnpm --filter @codexhub/cli dev -- session items $Session.session.id --type agentmessage --limit 20 --json
 pnpm --filter @codexhub/cli dev -- session send $Session.session.id --mode continue --message "Please continue your work and report the next result." --json
 pnpm --filter @codexhub/cli dev -- session review-status set $Session.session.id --implementation-done --self-validation-done --review-requested --note "Ready for review." --json
+$RunGroup = pnpm --filter @codexhub/cli dev -- run-group create --name "Demo batch" --project $Project.project.id --purpose "Observe related worker sessions." --json | ConvertFrom-Json
+pnpm --filter @codexhub/cli dev -- run-group add-session $RunGroup.run_group.id --session $Session.session.id --json
 pnpm --filter @codexhub/cli dev -- session watch $Session.session.id --limit 20
 pnpm --filter @codexhub/cli dev -- workspace cleanup $Workspace.workspace.id --json
 ```
@@ -58,6 +60,9 @@ It is not a validation gate and does not decide whether worker output is correct
 Task spec metadata is an immutable input snapshot or reference stored on session
 start. Workers should execute from it, not edit it, unless the assigned task is
 explicitly documentation work.
+
+Run groups are lightweight observation containers for related sessions. They do
+not schedule workers or enforce quality gates.
 
 ## API routes
 

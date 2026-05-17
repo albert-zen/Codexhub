@@ -6,6 +6,7 @@ import type {
   Page,
   Project,
   ReviewGateStatus,
+  RunGroup,
   SenderType,
   TaskSpecMetadata,
   WorkerSession,
@@ -51,6 +52,16 @@ export interface StartSessionRequest {
   initial_message?: string | undefined;
   task_spec?: CreateTaskSpecMetadataRequest | null | undefined;
   codex_options?: unknown | undefined;
+}
+
+export interface CreateRunGroupRequest {
+  name: string;
+  project_id?: string | null | undefined;
+  purpose?: string | null | undefined;
+}
+
+export interface AddRunGroupSessionRequest {
+  session_id: string;
 }
 
 export interface CreateTaskSpecMetadataRequest {
@@ -104,6 +115,14 @@ export interface SessionListResponse extends Page<WorkerSession> {
 
 export interface ProjectResponse {
   project: Project;
+}
+
+export interface RunGroupResponse {
+  run_group: RunGroup;
+}
+
+export interface RunGroupListResponse extends Page<RunGroup> {
+  run_groups: RunGroup[];
 }
 
 export interface WorkspaceResponse {

@@ -138,6 +138,45 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("creates run groups and associates sessions", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          run_group: {
+            id: "run_1",
+            name: "Batch",
+            purpose: "Parallel build",
+          },
+          sessions: [{ id: "sess_1", status: "awaiting_input" }],
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "run-group",
+      "create",
+      "--name",
+      "Batch",
+      "--purpose",
+      "Parallel build",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/run-groups");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      name: "Batch",
+      purpose: "Parallel build",
+    });
+    expect(output.join("").trim()).toBe("run_1 Batch - Parallel build");
+  });
+
   it("sends follow-up messages", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const program = createProgram({

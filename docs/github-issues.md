@@ -147,5 +147,6 @@ The next small issues created after the first hardening pass are:
 7. `#17 ci(repo): address GitHub Actions runtime warnings`
    - Handle Node 24 action runtime and Windows runner transition notices.
 8. `#18 feat(session): track review-gate status metadata`
+   - Status: implemented; close after CI is green.
    - Track worker/reviewer progress as observability metadata, not a validation
      gate.

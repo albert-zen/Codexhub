@@ -5,6 +5,7 @@ import type {
   MessageMode,
   Page,
   Project,
+  ReviewGateStatus,
   SenderType,
   WorkerSession,
   Workspace,
@@ -55,6 +56,15 @@ export interface SendMessageRequest {
   content: string;
   sender_type?: SenderType | undefined;
   sender_id?: string | null | undefined;
+}
+
+export interface UpdateReviewGateStatusRequest {
+  implementation_done?: boolean | undefined;
+  self_validation_done?: boolean | undefined;
+  review_requested?: boolean | undefined;
+  review_addressed?: boolean | undefined;
+  ready_for_human_review?: boolean | undefined;
+  note?: string | null | undefined;
 }
 
 export interface SessionListQuery {
@@ -116,4 +126,8 @@ export interface LatestItemResponse {
 export interface MessageResponse {
   message: Message;
   session?: WorkerSession;
+}
+
+export interface ReviewGateStatusResponse {
+  review_status: ReviewGateStatus;
 }

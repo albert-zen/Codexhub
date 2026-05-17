@@ -40,6 +40,7 @@ pnpm --filter @codexhub/cli dev -- session result $Session.session.id
 pnpm --filter @codexhub/cli dev -- session trace $Session.session.id --limit 20
 pnpm --filter @codexhub/cli dev -- session items $Session.session.id --type agentmessage --limit 20 --json
 pnpm --filter @codexhub/cli dev -- session send $Session.session.id --mode continue --message "Please continue your work and report the next result." --json
+pnpm --filter @codexhub/cli dev -- session review-status set $Session.session.id --implementation-done --self-validation-done --review-requested --note "Ready for review." --json
 pnpm --filter @codexhub/cli dev -- session watch $Session.session.id --limit 20
 pnpm --filter @codexhub/cli dev -- workspace cleanup $Workspace.workspace.id --json
 ```
@@ -50,6 +51,9 @@ empty message as an instruction to proceed.
 Workspace cleanup archives the workspace record by default. Add `--delete-files`
 only when you want Codexhub to remove the workspace directory after safety
 checks.
+
+Review status is explicit observability metadata for manager agents and humans.
+It is not a validation gate and does not decide whether worker output is correct.
 
 ## API routes
 

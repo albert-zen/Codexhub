@@ -62,7 +62,8 @@ The following work remains open next:
   navigation.
 - Add task spec metadata and minimal run groups so large batches can be
   observed without becoming project management (`#15`, `#16`).
-- Add review-gate status metadata as observability, not validation (`#18`).
+- Review-gate status metadata now tracks worker/reviewer progress as
+  observability, not validation.
 - Define and automate task-spec, worker, review-subagent, and quality-gate
   workflows for larger parallel builds.
 - Keep using the documentation system so task outcomes, workflow friction, and

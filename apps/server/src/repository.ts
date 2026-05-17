@@ -5,6 +5,7 @@ import {
   type ItemType,
   type MessageMode,
   type Project,
+  type ReviewGateStatus,
   type SenderType,
   type WorkerSession,
   type Workspace,
@@ -42,6 +43,15 @@ export interface CreateMessageInput {
   content: string;
   sender_type: SenderType;
   sender_id?: string | null;
+}
+
+export interface UpdateReviewGateStatusInput {
+  implementation_done?: boolean;
+  self_validation_done?: boolean;
+  review_requested?: boolean;
+  review_addressed?: boolean;
+  ready_for_human_review?: boolean;
+  note?: string | null;
 }
 
 export interface ItemPageOptions {
@@ -422,6 +432,63 @@ export class HubRepository {
     return this.requireMessage(id);
   }
 
+  getReviewGateStatus(sessionId: string): ReviewGateStatus {
+    this.requireSession(sessionId);
+    const row = this.db
+      .prepare("SELECT * FROM review_gate_statuses WHERE session_id = ?")
+      .get(sessionId);
+    if (row) return reviewGateStatusFromRow(row);
+
+    const now = isoNow();
+    this.db
+      .prepare(
+        `INSERT INTO review_gate_statuses (
+          session_id, implementation_done, self_validation_done,
+          review_requested, review_addressed, ready_for_human_review,
+          note, created_at, updated_at
+        ) VALUES (?, 0, 0, 0, 0, 0, NULL, ?, ?)`,
+      )
+      .run(sessionId, now, now);
+    return this.getReviewGateStatus(sessionId);
+  }
+
+  updateReviewGateStatus(
+    sessionId: string,
+    input: UpdateReviewGateStatusInput,
+  ): ReviewGateStatus {
+    this.getReviewGateStatus(sessionId);
+    const allowed: Array<keyof UpdateReviewGateStatusInput> = [
+      "implementation_done",
+      "self_validation_done",
+      "review_requested",
+      "review_addressed",
+      "ready_for_human_review",
+      "note",
+    ];
+    const entries: Array<
+      [keyof UpdateReviewGateStatusInput, boolean | string | null]
+    > = [];
+    for (const key of allowed) {
+      const value = input[key];
+      if (value !== undefined) entries.push([key, value]);
+    }
+    if (entries.length === 0) return this.getReviewGateStatus(sessionId);
+
+    const assignments = entries.map(([key]) => `${key} = ?`).join(", ");
+    const values = entries.map(([, value]) =>
+      typeof value === "boolean" ? (value ? 1 : 0) : value,
+    );
+    const now = isoNow();
+    this.db
+      .prepare(
+        `UPDATE review_gate_statuses
+         SET ${assignments}, updated_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(...values, now, sessionId);
+    return this.getReviewGateStatus(sessionId);
+  }
+
   appendItem(
     sessionId: string,
     payload: unknown,
@@ -745,6 +812,21 @@ function messageFromRow(row: unknown): import("@codexhub/core").Message {
   };
 }
 
+function reviewGateStatusFromRow(row: unknown): ReviewGateStatus {
+  const record = asRow(row);
+  return {
+    session_id: requiredString(record, "session_id"),
+    implementation_done: boolean(record, "implementation_done"),
+    self_validation_done: boolean(record, "self_validation_done"),
+    review_requested: boolean(record, "review_requested"),
+    review_addressed: boolean(record, "review_addressed"),
+    ready_for_human_review: boolean(record, "ready_for_human_review"),
+    note: string(record, "note"),
+    created_at: requiredString(record, "created_at"),
+    updated_at: requiredString(record, "updated_at"),
+  };
+}
+
 function asRow(row: unknown): Record<string, unknown> {
   if (row && typeof row === "object" && !Array.isArray(row))
     return row as Record<string, unknown>;
@@ -766,4 +848,8 @@ function number(row: Record<string, unknown>, key: string): number {
   const value = row[key];
   if (typeof value === "number") return value;
   throw new Error(`database field ${key} is not a number`);
+}
+
+function boolean(row: Record<string, unknown>, key: string): boolean {
+  return number(row, key) === 1;
 }

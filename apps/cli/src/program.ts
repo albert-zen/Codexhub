@@ -11,6 +11,7 @@ import type {
   SenderType,
   SessionListQuery,
   StartSessionRequest,
+  UpdateReviewGateStatusRequest,
   WorkerSessionStatus,
 } from "@codexhub/core";
 import { ApiClient, ApiError, type FetchLike, type JsonObject } from "./api.js";
@@ -94,6 +95,15 @@ interface SessionSendOptions extends BaseCommandOptions {
   mode: string;
   sender: string;
   senderId?: string;
+}
+
+interface ReviewStatusSetOptions extends BaseCommandOptions {
+  implementationDone?: boolean;
+  selfValidationDone?: boolean;
+  reviewRequested?: boolean;
+  reviewAddressed?: boolean;
+  readyForHumanReview?: boolean;
+  note?: string;
 }
 
 const DEFAULT_API = process.env.CODEXHUB_API ?? "http://127.0.0.1:4317";
@@ -427,6 +437,46 @@ export function createProgram(env: CliEnvironment = {}): Command {
         }),
     );
 
+  const reviewStatus = new Command("review-status").description(
+    "Inspect or update review-gate status metadata",
+  );
+  jsonOption(reviewStatus.command("get").description("Get review status"))
+    .argument("<session-id>", "Session ID")
+    .action((sessionId: string, opts: BaseCommandOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/sessions/${encodeURIComponent(sessionId)}/review-status`,
+        );
+        printResult(env, opts, result, () => formatReviewStatus(result));
+      }),
+    );
+  jsonOption(reviewStatus.command("set").description("Set review status"))
+    .argument("<session-id>", "Session ID")
+    .option("--implementation-done", "Implementation pass is done")
+    .option("--self-validation-done", "Worker ran its own validation")
+    .option("--review-requested", "Review subagent has been requested")
+    .option("--review-addressed", "Review findings have been addressed")
+    .option("--ready-for-human-review", "Ready for human review")
+    .option("--note <text>", "Short review status note")
+    .action((sessionId: string, opts: ReviewStatusSetOptions) =>
+      runAction(env, opts, async () => {
+        const body = omitUndefined<UpdateReviewGateStatusRequest>({
+          implementation_done: opts.implementationDone,
+          self_validation_done: opts.selfValidationDone,
+          review_requested: opts.reviewRequested,
+          review_addressed: opts.reviewAddressed,
+          ready_for_human_review: opts.readyForHumanReview,
+          note: opts.note,
+        });
+        const result = await client(program, env).put(
+          `/sessions/${encodeURIComponent(sessionId)}/review-status`,
+          body,
+        );
+        printResult(env, opts, result, () => formatReviewStatus(result));
+      }),
+    );
+  session.addCommand(reviewStatus);
+
   jsonOption(session.command("stop").description("Stop a session"))
     .argument("<session-id>", "Session ID")
     .action((sessionId: string, opts: BaseCommandOptions) =>
@@ -737,6 +787,22 @@ function formatMessageQueued(record: Record<string, unknown> | null): string {
   const id = stringField(record, "id") ?? "(unknown id)";
   const status = stringField(record, "status");
   return status ? `Message ${id} ${status}` : `Message ${id} queued`;
+}
+
+function formatReviewStatus(value: unknown): string {
+  const record = unwrapRecord(value, "review_status");
+  if (!record) return "No review status.";
+  const flags = [
+    "implementation_done",
+    "self_validation_done",
+    "review_requested",
+    "review_addressed",
+    "ready_for_human_review",
+  ]
+    .map((field) => `${field}=${record[field] === true ? "yes" : "no"}`)
+    .join(" ");
+  const note = stringField(record, "note");
+  return note ? `${flags}\nnote: ${note}` : flags;
 }
 
 function formatSessionInspect(record: Record<string, unknown> | null): string {

@@ -18,6 +18,12 @@ export type WorkspaceSourceType = "git" | "local";
 export type MessageMode = "initial" | "steer" | "continue";
 export type SenderType = "manager_agent" | "human" | "system";
 export type MessageStatus = "queued" | "sent" | "failed";
+export type ReviewGateStatusFlag =
+  | "implementation_done"
+  | "self_validation_done"
+  | "review_requested"
+  | "review_addressed"
+  | "ready_for_human_review";
 
 export type ItemType =
   | "agentmessage"
@@ -100,6 +106,18 @@ export interface Message {
   error: string | null;
   created_at: string;
   sent_at: string | null;
+}
+
+export interface ReviewGateStatus {
+  session_id: ID;
+  implementation_done: boolean;
+  self_validation_done: boolean;
+  review_requested: boolean;
+  review_addressed: boolean;
+  ready_for_human_review: boolean;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Page<T> {

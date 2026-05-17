@@ -48,6 +48,16 @@ export class ApiClient {
     return this.request<T>("POST", path, requestOptions);
   }
 
+  async put<T = unknown>(
+    path: string,
+    body?: JsonObject,
+    options: RequestOptions = {},
+  ): Promise<T> {
+    const requestOptions: RequestOptions = { ...options };
+    if (body !== undefined) requestOptions.body = body;
+    return this.request<T>("PUT", path, requestOptions);
+  }
+
   private async request<T>(
     method: string,
     path: string,

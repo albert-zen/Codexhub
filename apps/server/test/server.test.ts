@@ -103,6 +103,37 @@ describe("Codexhub API", () => {
     expect(continued.message.status).toBe("sent");
     expect(continued.message.content).toBe("Please continue.");
     expect(continued.session.status).toBe("awaiting_input");
+
+    const initialReviewStatus = await get(
+      `/api/v1/sessions/${sessionId}/review-status`,
+    );
+    expect(initialReviewStatus.review_status.implementation_done).toBe(false);
+
+    const reviewStatus = await put(
+      `/api/v1/sessions/${sessionId}/review-status`,
+      {
+        implementation_done: true,
+        self_validation_done: true,
+        review_requested: true,
+        note: "Worker is ready for review.",
+      },
+    );
+    expect(reviewStatus.review_status).toMatchObject({
+      implementation_done: true,
+      self_validation_done: true,
+      review_requested: true,
+      review_addressed: false,
+      ready_for_human_review: false,
+      note: "Worker is ready for review.",
+    });
+
+    const invalidReviewStatus = await app.inject({
+      method: "PUT",
+      url: `/api/v1/sessions/${sessionId}/review-status`,
+      payload: { implementation_done: "yes" },
+    });
+    expect(invalidReviewStatus.statusCode).toBe(400);
+    expect(invalidReviewStatus.json().error.code).toBe("invalid_review_status");
   });
 
   it("rejects cwd paths outside the workspace", async () => {
@@ -287,6 +318,13 @@ async function post(url: string, payload: unknown): Promise<any> {
 async function get(url: string): Promise<any> {
   const response = await app.inject({ method: "GET", url });
   expect(response.statusCode).toBe(200);
+  return response.json();
+}
+
+async function put(url: string, payload: unknown): Promise<any> {
+  const response = await app.inject({ method: "PUT", url, payload });
+  expect(response.statusCode).toBeGreaterThanOrEqual(200);
+  expect(response.statusCode).toBeLessThan(300);
   return response.json();
 }
 

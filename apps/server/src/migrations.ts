@@ -107,6 +107,23 @@ const migrations: Migration[] = [
       CREATE INDEX idx_messages_status ON messages(status);
     `,
   },
+  {
+    version: 2,
+    name: "review_gate_status",
+    sql: `
+      CREATE TABLE review_gate_statuses (
+        session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        implementation_done INTEGER NOT NULL DEFAULT 0 CHECK (implementation_done IN (0, 1)),
+        self_validation_done INTEGER NOT NULL DEFAULT 0 CHECK (self_validation_done IN (0, 1)),
+        review_requested INTEGER NOT NULL DEFAULT 0 CHECK (review_requested IN (0, 1)),
+        review_addressed INTEGER NOT NULL DEFAULT 0 CHECK (review_addressed IN (0, 1)),
+        ready_for_human_review INTEGER NOT NULL DEFAULT 0 CHECK (ready_for_human_review IN (0, 1)),
+        note TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

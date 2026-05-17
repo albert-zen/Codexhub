@@ -12,6 +12,7 @@ import {
   HubRepository,
   type ItemPageOptions,
   type SessionListOptions,
+  type UpdateReviewGateStatusInput,
 } from "./repository.js";
 import { CodexRuntime } from "./runtime.js";
 import { cleanupWorkspace } from "./workspace-cleanup.js";
@@ -327,6 +328,27 @@ function registerApiRoutes(
     return { items, messages: items, next_cursor: null, limit: items.length };
   });
 
+  app.get(path("/sessions/:id/review-status"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    return { review_status: state.repo.getReviewGateStatus(session.id) };
+  });
+
+  app.put(path("/sessions/:id/review-status"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    return {
+      review_status: state.repo.updateReviewGateStatus(
+        session.id,
+        parseReviewGateStatusUpdate(asRecord(request.body)),
+      ),
+    };
+  });
+
   app.post(path("/sessions/:id/stop"), async (request) => {
     const id = requiredString(asRecord(request.params), "id");
     requireSession(state.repo, id);
@@ -531,4 +553,38 @@ function parseItemType(
     return value;
   }
   throw new HttpError(400, "invalid_item_type", "unsupported item type");
+}
+
+function parseReviewGateStatusUpdate(
+  record: Record<string, unknown>,
+): UpdateReviewGateStatusInput {
+  const fields = [
+    "implementation_done",
+    "self_validation_done",
+    "review_requested",
+    "review_addressed",
+    "ready_for_human_review",
+  ] as const;
+  const update: UpdateReviewGateStatusInput = {};
+  for (const field of fields) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (typeof value !== "boolean") {
+      throw new HttpError(
+        400,
+        "invalid_review_status",
+        `${field} must be boolean`,
+      );
+    }
+    update[field] = value;
+  }
+
+  if ("note" in record) {
+    const value = record.note;
+    if (value !== null && typeof value !== "string") {
+      throw new HttpError(400, "invalid_review_status", "note must be string");
+    }
+    update.note = value;
+  }
+  return update;
 }

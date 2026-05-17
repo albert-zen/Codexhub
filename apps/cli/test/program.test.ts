@@ -161,6 +161,55 @@ describe("codexhub commands", () => {
     );
   });
 
+  it("sets review-gate status metadata", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          review_status: {
+            session_id: "sess_1",
+            implementation_done: true,
+            self_validation_done: true,
+            review_requested: true,
+            review_addressed: false,
+            ready_for_human_review: false,
+            note: "Ready for review.",
+          },
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "review-status",
+      "set",
+      "sess_1",
+      "--implementation-done",
+      "--self-validation-done",
+      "--review-requested",
+      "--note",
+      "Ready for review.",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/sessions/sess_1/review-status");
+    expect(calls[0]?.init?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      implementation_done: true,
+      self_validation_done: true,
+      review_requested: true,
+      note: "Ready for review.",
+    });
+    expect(output.join("").trim()).toContain("implementation_done=yes");
+    expect(output.join("").trim()).toContain("note: Ready for review.");
+  });
+
   it("prints readable recent traces with bounded item windows", async () => {
     const calls: string[] = [];
     const output: string[] = [];

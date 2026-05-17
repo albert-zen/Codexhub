@@ -1,0 +1,67 @@
+name: Task Spec
+description: Create a Codexhub task spec for one worker-sized implementation.
+title: "<type>(<scope>): <short summary>"
+labels: []
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or system pain does this task address?
+    validations:
+      required: true
+  - type: textarea
+    id: intent
+    attributes:
+      label: Intent
+      description: Why does this change matter, and what product boundary should it protect?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Components, packages, files, API routes, CLI commands, or GUI views expected to change.
+    validations:
+      required: true
+  - type: textarea
+    id: non_scope
+    attributes:
+      label: Non-Scope
+      description: What must not be included?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Required Behavior
+      description: User-visible, API-visible, CLI-visible, or persistence behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: Concrete pass/fail requirements.
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Exact tests, checks, screenshots, or manual checks expected.
+      placeholder: |
+        - pnpm --filter @codexhub/<package> test
+        - pnpm check
+    validations:
+      required: true
+  - type: textarea
+    id: review_focus
+    attributes:
+      label: Review Focus
+      description: What should the review subagent scrutinize most closely?
+    validations:
+      required: true

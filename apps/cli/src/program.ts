@@ -421,7 +421,9 @@ function parseJsonOption(
     return JSON.parse(value);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`${optionName} must be valid JSON: ${detail}`);
+    throw new Error(`${optionName} must be valid JSON: ${detail}`, {
+      cause: error,
+    });
   }
 }
 

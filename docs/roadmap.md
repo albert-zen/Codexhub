@@ -43,12 +43,20 @@ The repository currently contains:
 
 The following work remains open:
 
+- Make session trace readable as a transcript instead of raw delta fragments.
+- Add low-context result/trace/watch CLI shortcuts with bounded windows and
+  cursor/range pagination.
+- Require explicit continue messages instead of empty-message continuation.
 - Broaden real Codex app-server fixture coverage beyond the fake worker path.
 - Harden process lifecycle behavior across server restarts.
 - Add explicit cleanup/delete workspace endpoints if needed.
 - Add smoke tests that drive the built CLI against a running test server.
 - Decide whether root route aliases should remain after Manager Agent clients
   converge on `/api/v1`.
+- Define and automate task-spec, worker, review-subagent, and quality-gate
+  workflows for larger parallel builds.
+- Define a documentation system so task outcomes, workflow friction, and lessons
+  are captured after each worker run.
 
 ## Product Principles
 
@@ -212,6 +220,95 @@ Status: open.
 - Add process cleanup behavior for stopped or failed sessions.
 - Add README examples for the full local loop.
 - Add smoke tests that prove server, CLI, and core contracts remain aligned.
+
+### Phase 7: Readable Trace And Query Ergonomics
+
+Status: open.
+
+- Build a transcript projection that aggregates Codex agent-message deltas into
+  complete readable messages.
+- Show sent prompts/messages, full agent messages, and collapsible tool calls in
+  chronological order.
+- Keep raw JSONL/item inspection available as an explicit debug mode.
+- Add CLI shortcuts for `session result`, `session trace`, `session watch`, and
+  `sessions recent`.
+- Default result queries to a recent bounded window, such as the latest 10 or 20
+  transcript turns/messages.
+- Support cursor/range pagination so Manager Agents can inspect 20-50 without
+  re-reading 1-20.
+
+### Phase 8: Explicit Task Specs
+
+Status: open.
+
+- Introduce a task-spec format for feature, component, and bug work.
+- Store task intent, scope, non-scope, acceptance criteria, validation commands,
+  and review focus separately from worker implementation notes.
+- Treat the task spec as immutable input for the worker unless a manager
+  explicitly assigns doc updates.
+- Let API/CLI/GUI associate WorkerSessions with task specs so humans can inspect
+  what a worker was asked to do.
+- Add issue templates that map cleanly into task specs for one issue / one
+  branch / one PR workflows.
+- Require each task to check which docs need updates before handoff.
+
+### Phase 9: Review Subagent Quality Gate
+
+Status: open.
+
+- Require substantial worker tasks to spawn a read-only review subagent after the
+  first implementation pass.
+- Pass the review subagent the original task spec, changed files, validation
+  output, and diff paths.
+- Ask the review subagent to judge intent satisfaction, acceptance criteria,
+  tests, product boundaries, regressions, Windows/process risks, and
+  over-broad refactors.
+- Require the worker to respond to review findings as accepted, rejected, or
+  deferred.
+- Persist review findings and worker responses as part of the session/task
+  record.
+- Include documentation impact in the reviewer checklist.
+
+### Phase 10: Parallel Build Orchestration
+
+Status: open.
+
+- Add worktree-aware workspace creation for parallel workers that need isolated
+  write scopes.
+- Track package/file ownership per WorkerSession to avoid conflicts.
+- Add worker run groups so a manager can launch a coordinated batch of workers
+  for one roadmap slice.
+- Add quality-gate status per worker: implementation done, self-validation done,
+  review requested, review addressed, ready for human review.
+- Add a dashboard view for run groups, blocked workers, failed quality gates,
+  and review findings.
+- Keep this as a control-plane feature, not a project management replacement.
+
+### Phase 10.5: Documentation Memory
+
+Status: open.
+
+- Keep a clear documentation map so agents know where to write setup, roadmap,
+  lessons, subagent operations, issue drafts, task specs, and review rules.
+- Add post-task documentation checks to worker handoffs.
+- Capture reusable experience from every large worker/reviewer cycle.
+- Treat stale docs as a bug or follow-up issue.
+- Avoid turning docs into chat transcripts; record concrete operational lessons
+  and product decisions.
+
+### Phase 11: Automation And CI Integration
+
+Status: open.
+
+- Add repository CI for `pnpm format`, `pnpm check`, `pnpm test`, and
+  `pnpm build`.
+- Add package-level CI jobs when the repo grows enough to benefit from faster
+  feedback.
+- Add CLI/server smoke tests that run against a temporary Codexhub server.
+- Add optional long-running dogfood jobs that create Codexhub sessions and
+  report discovered issues without mutating code.
+- Keep CI as an external validation surface; do not turn Codexhub itself into a
+  validation gate for worker output.
 
 ## Definition Of Done
 

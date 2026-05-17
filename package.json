@@ -9,13 +9,19 @@
     "check": "pnpm -r check",
     "dev": "pnpm --filter @codexhub/server dev",
     "dev:web": "pnpm --filter @codexhub/web dev",
+    "lint": "eslint . --max-warnings 0",
+    "quality": "pnpm format && pnpm lint && pnpm check && pnpm test && pnpm build",
     "test": "pnpm -r test",
     "format": "prettier --check ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.10.1",
+    "eslint": "^10.4.0",
+    "globals": "^17.6.0",
     "prettier": "^3.7.4",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.3",
     "vitest": "^4.0.15"
   }
 }

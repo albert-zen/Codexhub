@@ -58,6 +58,8 @@ The following work remains open next:
 - Continue sharing API DTO/client contracts across CLI and web where it removes
   real duplication without creating a large client abstraction.
 - Add worktree-aware workspace creation for parallel worker sessions (`#13`).
+- Web transcript pagination now exposes bounded item windows and previous/next
+  navigation.
 - Add task spec metadata and minimal run groups so large batches can be
   observed without becoming project management (`#15`, `#16`).
 - Add review-gate status metadata as observability, not validation (`#18`).

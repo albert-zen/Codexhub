@@ -14,6 +14,13 @@ import "./styles.css";
 
 type SendMessageMode = Exclude<MessageMode, "initial">;
 
+interface ItemPage {
+  items: Item[];
+  next_cursor: string | null;
+  limit: number;
+  type: string;
+}
+
 type TranscriptEntry =
   | {
       kind: "message";
@@ -58,6 +65,7 @@ const ITEM_TYPES: Array<ItemType | "all"> = [
   "reasoning",
   "raw",
 ];
+const ITEM_PAGE_LIMIT = 50;
 
 class ApiError extends Error {
   readonly status: number;
@@ -168,19 +176,36 @@ async function fetchSession(sessionId: ID): Promise<WorkerSession> {
 async function fetchItems(
   sessionId: ID,
   type: ItemType | "all",
-): Promise<Item[]> {
-  const query = queryString({ limit: 200, type: type === "all" ? null : type });
+  afterSequence: number | null,
+): Promise<ItemPage> {
+  const query = queryString({
+    limit: ITEM_PAGE_LIMIT,
+    type: type === "all" ? null : type,
+    after_sequence: afterSequence,
+  });
   const nestedPath = `/sessions/${encodeURIComponent(sessionId)}/items${query}`;
   const flatPath = `/items${queryString({
     session_id: sessionId,
-    limit: 200,
+    limit: ITEM_PAGE_LIMIT,
     type: type === "all" ? null : type,
+    after_sequence: afterSequence,
   })}`;
   const body = await withFallback(
     () => request<unknown>(nestedPath),
     () => request<unknown>(flatPath),
   );
-  return listFrom<Item>(body, "items");
+  return {
+    items: listFrom<Item>(body, "items"),
+    next_cursor:
+      isObject(body) && typeof body.next_cursor === "string"
+        ? body.next_cursor
+        : null,
+    limit:
+      isObject(body) && typeof body.limit === "number"
+        ? body.limit
+        : ITEM_PAGE_LIMIT,
+    type: isObject(body) && typeof body.type === "string" ? body.type : type,
+  };
 }
 
 async function fetchMessages(sessionId: ID): Promise<Message[]> {
@@ -381,6 +406,13 @@ function itemSummary(item: Item): string {
   return summary.length > 220 ? `${summary.slice(0, 220)}...` : summary;
 }
 
+function itemWindowLabel(items: Item[], afterSequence: number | null): string {
+  if (items.length === 0) return `after #${afterSequence ?? 0}`;
+  const first = items[0]?.sequence ?? afterSequence ?? 0;
+  const last = items[items.length - 1]?.sequence ?? first;
+  return first === last ? `#${first}` : `#${first}-${last}`;
+}
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -394,6 +426,9 @@ function App() {
     null,
   );
   const [items, setItems] = useState<Item[]>([]);
+  const [itemAfter, setItemAfter] = useState<number | null>(null);
+  const [itemHistory, setItemHistory] = useState<number[]>([]);
+  const [itemNextCursor, setItemNextCursor] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
@@ -465,21 +500,27 @@ function App() {
   }, []);
 
   const loadDetail = useCallback(
-    async (sessionId: ID, type: ItemType | "all") => {
+    async (
+      sessionId: ID,
+      type: ItemType | "all",
+      afterSequence: number | null,
+    ) => {
       setLoadingDetail(true);
       setError(null);
       try {
-        const [nextSession, nextItems, nextMessages] = await Promise.all([
+        const [nextSession, nextItemPage, nextMessages] = await Promise.all([
           fetchSession(sessionId),
-          fetchItems(sessionId, type),
+          fetchItems(sessionId, type, afterSequence),
           fetchMessages(sessionId),
         ]);
         setSelectedSession(nextSession);
-        setItems(nextItems);
+        setItems(nextItemPage.items);
+        setItemNextCursor(nextItemPage.next_cursor);
         setMessages(nextMessages);
       } catch (loadError) {
         setSelectedSession(null);
         setItems([]);
+        setItemNextCursor(null);
         setMessages([]);
         setError(`Session detail: ${getErrorMessage(loadError)}`);
       } finally {
@@ -491,8 +532,10 @@ function App() {
 
   const refreshCurrent = useCallback(async () => {
     if (selectedProjectId) await loadSessions(selectedProjectId);
-    if (selectedSessionId) await loadDetail(selectedSessionId, itemType);
+    if (selectedSessionId)
+      await loadDetail(selectedSessionId, itemType, itemAfter);
   }, [
+    itemAfter,
     itemType,
     loadDetail,
     loadSessions,
@@ -517,10 +560,15 @@ function App() {
     if (!selectedSessionId) {
       setSelectedSession(null);
       setItems([]);
+      setItemAfter(null);
+      setItemHistory([]);
+      setItemNextCursor(null);
       setMessages([]);
       return;
     }
-    void loadDetail(selectedSessionId, itemType);
+    setItemAfter(null);
+    setItemHistory([]);
+    void loadDetail(selectedSessionId, itemType, null);
   }, [itemType, loadDetail, selectedSessionId]);
 
   useEffect(() => {
@@ -560,6 +608,28 @@ function App() {
     } finally {
       setSubmitting(null);
     }
+  }
+
+  async function handleNextItems() {
+    if (!selectedSession || itemNextCursor === null) return;
+    const nextAfter = Number(itemNextCursor);
+    if (!Number.isInteger(nextAfter)) return;
+    setItemHistory((current) => [...current, itemAfter ?? 0]);
+    setItemAfter(nextAfter);
+    await loadDetail(selectedSession.id, itemType, nextAfter);
+  }
+
+  async function handlePreviousItems() {
+    if (!selectedSession || itemHistory.length === 0) return;
+    const previousHistory = itemHistory.slice(0, -1);
+    const previousAfter = itemHistory[itemHistory.length - 1] ?? 0;
+    setItemHistory(previousHistory);
+    setItemAfter(previousAfter === 0 ? null : previousAfter);
+    await loadDetail(
+      selectedSession.id,
+      itemType,
+      previousAfter === 0 ? null : previousAfter,
+    );
   }
 
   return (
@@ -751,22 +821,46 @@ function App() {
 
               <section className="items-block" aria-label="Session transcript">
                 <div className="section-heading">
-                  <h3>Transcript</h3>
-                  <label>
-                    Type
-                    <select
-                      value={itemType}
-                      onChange={(event) =>
-                        setItemType(event.target.value as ItemType | "all")
-                      }
+                  <div>
+                    <h3>Transcript</h3>
+                    <p>
+                      Items {itemWindowLabel(items, itemAfter)}; page limit{" "}
+                      {ITEM_PAGE_LIMIT}
+                    </p>
+                  </div>
+                  <div className="item-controls">
+                    <label>
+                      Type
+                      <select
+                        value={itemType}
+                        onChange={(event) =>
+                          setItemType(event.target.value as ItemType | "all")
+                        }
+                      >
+                        {ITEM_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="button button-secondary button-compact"
+                      type="button"
+                      onClick={() => void handlePreviousItems()}
+                      disabled={loadingDetail || itemHistory.length === 0}
                     >
-                      {ITEM_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      Previous
+                    </button>
+                    <button
+                      className="button button-secondary button-compact"
+                      type="button"
+                      onClick={() => void handleNextItems()}
+                      disabled={loadingDetail || itemNextCursor === null}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
 
                 <div className="item-list" aria-busy={loadingDetail}>

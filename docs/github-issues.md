@@ -138,6 +138,7 @@ The next small issues created after the first hardening pass are:
 3. `#13 feat(workspace): add git worktree workspace mode`
    - Isolated write scopes for parallel worker sessions.
 4. `#14 feat(web): paginate readable session transcript`
+   - Status: implemented; close after CI is green.
    - Load transcript windows without rereading the first 200 items.
 5. `#15 feat(session): attach task spec metadata to worker sessions`
    - Persist immutable task intent/scope/acceptance criteria references.

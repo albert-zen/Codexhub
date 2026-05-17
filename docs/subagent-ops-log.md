@@ -1,0 +1,93 @@
+# Subagent Ops Log
+
+This log records implementation coordination friction and follow-up issues while
+building Codexhub with parallel workers.
+
+## Operating Rules
+
+- Ownership for this pass is docs only.
+- Do not revert edits made by other workers.
+- Check `git status --short` before editing and before handoff.
+- Keep each implementation PR aligned to one issue from `docs/github-issues.md`
+  unless the issue explicitly allows a paired change.
+- Prefer package ownership boundaries to reduce merge conflicts:
+  `packages/core`, `apps/server`, `apps/cli`, `apps/web`, and `docs`.
+- If an issue requires touching shared types, coordinate before editing server,
+  CLI, and web code in the same pass.
+- Include changed files and verification commands in every handoff.
+
+## 2026-05-18
+
+- Initial plan: split work by package to reduce merge conflicts.
+- Repository observed as a new/untracked scaffold with packages for core,
+  server, CLI, and web.
+- Current server surface is only `/health`; workspace/session APIs are not
+  implemented yet.
+- Core already has useful shared contracts: domain types, item classifier, and
+  session state helper tests.
+- CLI currently only checks health.
+- Web currently shows a placeholder shell.
+- Docs pass expanded roadmap, lessons, ops notes, and seeded the first GitHub
+  issue batch.
+- Web worker completed cleanly inside `apps/web` and verified the Vite UI
+  against the expected API-down error state.
+- CLI worker completed cleanly inside `apps/cli` with mocked fetch contract
+  tests.
+- Server workers overlapped and one left a second implementation of workspace,
+  runtime, repositories, and routes under different file names. The main agent
+  consolidated on one server implementation and removed the duplicate generated
+  files before final verification.
+- Long-running server subagents were shut down once they stopped returning
+  progress, because the next critical path depended on finishing the same
+  package.
+- Final integration keeps both `/api/v1/*` routes and root aliases, because the
+  API plan uses `/api/v1` while the first CLI/web pass had already targeted root
+  paths.
+- Final verification passed `pnpm check`, `pnpm test`, `pnpm build`, and
+  `pnpm format`.
+- Added repo-level `AGENTS.md` for subagent delegation norms: every subagent
+  prompt needs sufficient spec, explicit scope, acceptance criteria, validation,
+  and handoff requirements.
+- Do not store Codexhub project-specific subagent norms as a local machine
+  Codex skill. Keep them in the repository so the policy travels with the code.
+
+## Coordination Friction
+
+- The whole repository currently appears untracked, which makes `git status`
+  less useful for distinguishing worker changes. Use explicit changed-file lists
+  in handoffs.
+- Storage work and API work can collide in `apps/server`; split repository,
+  migration, and route issues when possible.
+- Worker launch and item ingestion depend on the Codex app-server protocol
+  details. Start with a launcher boundary and fixture ingestion tests.
+- GUI work depends on API shape. Early web issues should use health/status
+  surfaces until session endpoints are stable.
+- Message dispatch touches shared state rules, server routes, CLI, and GUI.
+  Keep the first dispatch issue server-only, then add CLI and GUI follow-ups.
+- Subagents can finish useful package-local work quickly, but server work needs
+  sharper file ownership. Splitting "persistence" and "runtime" inside the same
+  package still collided because both needed API and route seams.
+- When subagents do not commit to branches or worktrees, cleanup requires manual
+  deletion of duplicate generated files. Prefer real git worktrees once the repo
+  has an initial commit.
+- Contract-first route names matter. The CLI and web should consume shared DTO
+  definitions or a generated client before parallel UI/CLI work starts.
+
+## Suggested Ownership Map
+
+- Core contracts and classifiers: one worker.
+- Server config, migrations, and repositories: one worker.
+- Server HTTP routes: one worker after repository contracts settle.
+- Codex worker process adapter: one worker with fixture-first tests.
+- CLI commands: one worker after route contracts settle.
+- Web dashboard: one worker after read APIs settle.
+- Docs and issue grooming: one worker.
+
+## Handoff Checklist
+
+- State the issue id being handled.
+- List files changed.
+- Note any files intentionally left untouched because another worker owns them.
+- Record tests or checks run.
+- Record blocked assumptions, especially around Codex app-server launch,
+  payload shape, or database package choice.

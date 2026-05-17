@@ -1,0 +1,163 @@
+import { describe, expect, it } from "vitest";
+import { buildUrl } from "../src/api.js";
+import { createProgram, type CliEnvironment } from "../src/program.js";
+
+describe("buildUrl", () => {
+  it("normalizes the base URL and omits empty query values", () => {
+    expect(
+      buildUrl("http://127.0.0.1:4317/", "/sessions", {
+        status: "running",
+        cursor: "",
+        limit: 20,
+      }),
+    ).toBe("http://127.0.0.1:4317/sessions?status=running&limit=20");
+  });
+});
+
+describe("codexhub commands", () => {
+  it("creates projects with snake_case API payloads", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({ id: "proj_1", name: "Demo" });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "project",
+      "create",
+      "--name",
+      "Demo",
+      "--repo-url",
+      "https://example.test/repo.git",
+      "--json",
+    ]);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("http://api.test/projects");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      name: "Demo",
+      default_repo_url: "https://example.test/repo.git",
+    });
+    expect(JSON.parse(output.join(""))).toEqual({ id: "proj_1", name: "Demo" });
+  });
+
+  it("lists sessions with filters and concise human output", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse({
+          items: [
+            {
+              id: "sess_1",
+              status: "awaiting_input",
+              workspace_id: "work_1",
+              last_agent_message: "Ready for the next instruction.",
+            },
+          ],
+          next_cursor: null,
+          limit: 20,
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test/",
+      "sessions",
+      "list",
+      "--project",
+      "proj_1",
+      "--status",
+      "awaiting_input",
+      "--limit",
+      "20",
+    ]);
+
+    expect(calls).toEqual([
+      "http://api.test/sessions?project_id=proj_1&status=awaiting_input&limit=20",
+    ]);
+    expect(output.join("").trim()).toBe(
+      'sess_1 awaiting_input workspace=work_1 latest="Ready for the next instruction."',
+    );
+  });
+
+  it("sends follow-up messages", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({ id: "msg_1", status: "queued" });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "send",
+      "sess_1",
+      "--mode",
+      "continue",
+      "keep",
+      "going",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/sessions/sess_1/messages");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      mode: "continue",
+      content: "keep going",
+      sender_type: "human",
+    });
+  });
+
+  it("prints JSON API errors for JSON commands", async () => {
+    let exitCode = 0;
+    const errors: string[] = [];
+    const env: CliEnvironment = {
+      fetch: async () => jsonResponse({ error: "not found" }, { status: 404 }),
+      stderr: (text) => errors.push(text),
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+    };
+
+    await createProgram(env).parseAsync([
+      "node",
+      "codexhub",
+      "session",
+      "inspect",
+      "missing",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(errors.join(""))).toMatchObject({
+      error: "not found",
+      status: 404,
+    });
+  });
+});
+
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status: init.status ?? 200,
+    headers: { "content-type": "application/json", ...init.headers },
+  });
+}

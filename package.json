@@ -1,0 +1,21 @@
+{
+  "name": "codexhub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "build": "pnpm -r build",
+    "check": "pnpm -r check",
+    "dev": "pnpm --filter @codexhub/server dev",
+    "dev:web": "pnpm --filter @codexhub/web dev",
+    "test": "pnpm -r test",
+    "format": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.15"
+  }
+}

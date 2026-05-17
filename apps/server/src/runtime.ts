@@ -208,7 +208,8 @@ export class CodexRuntime {
       });
     }
 
-    const text = contentOrContinue(options.message.content);
+    const text = options.message.content.trim();
+    if (!text) throw new Error("continue message content is required");
     const result = await this.startTurn(
       managed,
       workspace,
@@ -302,7 +303,7 @@ export class CodexRuntime {
         item: {
           id: `fake-agent-${Date.now()}`,
           type: "agentMessage",
-          text: `Fake Codex worker received: ${contentOrContinue(message.content)}`,
+          text: `Fake Codex worker received: ${message.content.trim()}`,
         },
       },
     });
@@ -592,11 +593,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function requireString(value: string | null, name: string): string {
   if (value) return value;
   throw new Error(`${name} is required`);
-}
-
-function contentOrContinue(value: string): string {
-  const trimmed = value.trim();
-  return trimmed === "" ? "Please continue." : trimmed;
 }
 
 function errorMessage(error: unknown): string {

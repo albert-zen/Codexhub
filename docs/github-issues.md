@@ -1,357 +1,127 @@
 # GitHub Issues
 
-This file seeds the first batch of small, executable GitHub issues for Codex
-Hub. Each section is intended to become one issue and one focused PR unless the
-assignee calls out a narrower split before starting.
+This file summarizes the current executable backlog after the initial Codexhub
+implementation pass. GitHub issues are the active execution source of truth; this
+doc keeps the local roadmap readable for manager agents and human maintainers.
 
 Use these defaults unless an issue says otherwise:
 
 - Branch from the current shared worktree state.
 - Run `git status --short` before editing and before handoff.
 - Do not revert unrelated edits.
-- Keep code changes inside the named area.
-- Update docs only when acceptance criteria explicitly require it.
-- Verify with `pnpm build`, `pnpm check`, and the relevant package tests when
-  code changes are made.
-
-## CH-001: Add Server Runtime Config
-
-Area: `apps/server`
-
-Goal: centralize server runtime config for host, port, and SQLite data path.
-
-Scope:
-
-- Add a small config module used by server startup.
-- Keep existing default host `127.0.0.1` and port `4317`.
-- Default database path to `apps/server/data/codexhub.sqlite`.
-- Allow environment overrides for host, port, and database path.
-
-Acceptance criteria:
-
-- Server startup reads config from one module instead of scattered constants.
-- Existing `/health` behavior is unchanged.
-- Invalid port config fails with a clear startup error.
-- Build and type checks pass.
-
-Out of scope:
-
-- Creating tables.
-- Changing API routes.
-- Launching Codex workers.
-
-## CH-002: Bootstrap SQLite Schema And Migrations
-
-Area: `apps/server`
-
-Goal: create an idempotent local SQLite schema for the v1 domain model.
-
-Scope:
-
-- Add database open/bootstrap code.
-- Create the parent data directory when missing.
-- Add migrations for projects, workspaces, worker sessions, items, and messages.
-- Keep table columns aligned with `packages/core/src/types.ts`.
-
-Acceptance criteria:
-
-- Starting the server against an empty data path creates the database and all v1
-  tables.
-- Re-starting the server does not fail or duplicate migrations.
-- A test or script exercises bootstrap against a temporary database path.
-- Raw item payload storage can preserve arbitrary JSON.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- HTTP CRUD routes.
-- Codex process launch.
-- GUI changes.
-
-## CH-003: Add Workspace Repository And API
-
-Area: `apps/server`
-
-Goal: create and read workspace records through the API.
-
-Scope:
-
-- Add repository functions for workspace create/read.
-- Add `POST /workspaces`.
-- Add `GET /workspaces/:id`.
-- Validate request bodies with clear errors.
-- Generate ids server-side.
-
-Acceptance criteria:
-
-- `POST /workspaces` stores a workspace with source type, path, cwd, optional
-  repo metadata, and status.
-- `GET /workspaces/:id` returns the stored record.
-- Missing workspace ids return `404` with a compact error body.
-- Tests cover create, read, validation failure, and missing id.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Cloning git repositories.
-- Creating directories on disk beyond database/data bootstrap.
-- Starting sessions.
-
-## CH-004: Add Session Repository And Read API
-
-Area: `apps/server`
-
-Goal: persist worker session records and expose compact session reads.
-
-Scope:
-
-- Add repository functions for session create/read/update.
-- Add `POST /sessions` for creating a session record tied to a workspace.
-- Add `GET /sessions/:id`.
-- Initialize sessions in `starting` status.
-
-Acceptance criteria:
-
-- A session cannot be created for a missing workspace.
-- Created sessions include project id, workspace id, status, timestamps, and
-  nullable Codex process/thread fields.
-- `GET /sessions/:id` returns the stored session.
-- Missing session ids return `404`.
-- Tests cover create, missing workspace, read, and missing id.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Launching Codex app-server.
-- Item ingestion.
-- Message sending.
-
-## CH-005: Add Codex Worker Launcher Boundary
-
-Area: `apps/server`
-
-Goal: introduce a testable boundary for launching and tracking Codex app-server
-workers without coupling routes directly to child process details.
-
-Scope:
-
-- Define a launcher interface for start, stop, and send-message operations.
-- Add a real launcher placeholder or minimal implementation behind the boundary.
-- Add a fake launcher for tests.
-- Persist process pid or startup failure reason when launch is attempted.
-
-Acceptance criteria:
-
-- Session start code depends on the launcher interface, not direct child process
-  calls.
-- Tests can exercise successful and failed launch paths with the fake launcher.
-- Startup failure moves the session to `failed` with a failure reason.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Full Codex protocol support.
-- Message dispatch implementation beyond interface shape.
-- GUI changes.
-
-## CH-006: Persist Raw Codex Items
-
-Area: `apps/server`
-
-Goal: ingest raw Codex payloads for a session and store classified item rows.
-
-Scope:
-
-- Add an internal ingestion function that accepts session id and raw payload.
-- Assign monotonic per-session sequence numbers.
-- Use `classifyCodexPayload` from `packages/core`.
-- Store raw payload, method, Codex item id/type, item type, and text excerpt.
-- Update `last_item_sequence` on the session.
-
-Acceptance criteria:
-
-- Multiple ingested payloads for one session receive contiguous sequence values.
-- Raw payload JSON is preserved losslessly enough to round-trip through the DB.
-- Classified fields match the core classifier result.
-- Ingestion fails clearly for a missing session id.
-- Tests cover agent message, tool call/result, error, and raw fallback payloads.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Public event ingest API, unless needed for tests.
-- Live Codex stream wiring.
-- GUI changes.
-
-## CH-007: Add Item Listing API
-
-Area: `apps/server`
-
-Goal: expose compact, filterable item reads for manager agents and the GUI.
-
-Scope:
-
-- Add `GET /sessions/:id/items`.
-- Support `type`, `after`, and `limit` query parameters.
-- Return the shared `Page<Item>` shape.
-- Keep default limit small enough for low-context reads.
-
-Acceptance criteria:
-
-- Items are returned in ascending sequence order.
-- `after` returns only items with a greater sequence.
-- `type` filters by item type.
-- `limit` is bounded and reflected in the response.
-- Missing session ids return `404`.
-- Tests cover pagination, filtering, and invalid query values.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Full text search.
-- Transcript rendering.
-- GUI changes.
-
-## CH-008: Maintain Latest Agent Message Projection
-
-Area: `apps/server`
-
-Goal: keep session-level latest agent message fields up to date during item
-ingestion.
-
-Scope:
-
-- Update `last_agent_message`, `last_agent_message_item_id`, and
-  `last_agent_message_at` when an agent message item is completed.
-- Decide and document how deltas are handled before completion.
-- Add `GET /sessions/:id/latest-agent-message`.
-
-Acceptance criteria:
-
-- Completed agent message payloads update the session projection.
-- Non-agentmessage items do not overwrite the projection.
-- The latest-agent-message route returns the compact projection for a session.
-- A session with no agent message returns `null` fields, not an error.
-- Tests cover first message, later message replacement, and non-message items.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Full message delta reconstruction if completion payloads already contain text.
-- GUI changes.
-
-## CH-009: Add Message Queue API With State Guards
-
-Area: `apps/server`
-
-Goal: queue `steer` and `continue` messages only when the current session state
-allows them.
-
-Scope:
-
-- Add `POST /sessions/:id/messages`.
-- Validate mode, content, sender type, and optional sender id.
-- Use `canSendMessage` from `packages/core`.
-- Persist queued/sent/failed message records.
-- Move session state according to shared state helpers when dispatch succeeds.
-
-Acceptance criteria:
-
-- `steer` is accepted for `running` and `awaiting_input` sessions.
-- `continue` is accepted only for `awaiting_input` sessions.
-- Invalid mode/state combinations return `409` with a clear error code.
-- Accepted messages are persisted with status and timestamps.
-- Tests cover valid steer, valid continue, invalid state, and missing session.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- CLI message commands.
-- GUI composer.
-- Sophisticated retry policy.
-
-## CH-010: Expand CLI For The V1 Loop
-
-Area: `apps/cli`
-
-Goal: expose the core local workflow through CLI commands once server routes
-exist.
-
-Scope:
-
-- Add workspace create/get commands.
-- Add session create/get commands.
-- Add item list command with `--type`, `--after`, and `--limit`.
-- Add message send command for `steer` and `continue`.
-- Support `--json` output for each command.
-
-Acceptance criteria:
-
-- CLI commands call the documented API routes.
-- Human output is concise and stable.
-- JSON output is parseable and matches API response bodies.
-- HTTP errors produce non-zero exit codes and useful messages.
-- Build, type checks, and relevant tests pass.
-
-Out of scope:
-
-- Interactive prompts.
-- GUI changes.
-- Implementing missing server routes in the CLI PR.
-
-## CH-011: Replace Web Placeholder With Session Dashboard
-
-Area: `apps/web`
-
-Goal: provide the first GUI inspection surface for Codexhub sessions.
-
-Scope:
-
-- Replace the placeholder with a session dashboard.
-- Fetch health and session summary data from the API.
-- Show status, workspace path/cwd, last agent message, and updated time.
-- Add a session detail area with item list filters if item APIs are available.
-
-Acceptance criteria:
-
-- The page clearly distinguishes API offline, empty state, loading, and loaded
-  states.
-- Session rows are scannable and do not require reading raw JSON.
-- The UI does not expose message actions until server state guards exist.
-- Build and type checks pass.
-- A browser smoke check confirms the page renders without console errors.
-
-Out of scope:
-
-- Auth.
-- Charts.
-- Full transcript rendering.
-- Implementing missing server APIs in the web PR.
-
-## CH-012: Add Realistic Codex Payload Fixtures
-
-Area: `packages/core`
-
-Goal: harden classification against realistic Codex app-server event shapes.
-
-Scope:
-
-- Add fixture payloads for agent messages, command execution, tool calls,
-  reasoning deltas, turn state, and errors.
-- Extend classifier tests to use the fixtures.
-- Document any unknown event shape as raw instead of forcing a brittle
-  classification.
-
-Acceptance criteria:
-
-- Fixture tests cover every `ItemType`.
-- Existing classifier behavior remains backward compatible unless a fixture
-  proves it wrong.
-- Unknown future events still classify as `raw`.
-- Package tests pass.
-
-Out of scope:
-
-- Server ingestion.
-- Database schema.
-- Live app-server integration.
+- Keep each issue small enough for one branch and one PR.
+- Keep changes inside the named area and avoid broad refactors.
+- Check whether docs need updates before handoff.
+- For code changes, verify with the narrow package checks plus broader root
+  checks when the blast radius is unclear.
+
+## Initial Implementation Status
+
+The original seed backlog for server config, SQLite persistence, workspace and
+session APIs, worker launch, raw item ingestion, item reads, latest-message
+projection, message queueing, CLI commands, and first web dashboard has been
+substantially implemented.
+
+Those early CH-001 through CH-012 drafts are superseded by the open GitHub issue
+set below. Do not re-open the seed issues as large epics; use the current issues
+or split a smaller follow-up when needed.
+
+## Current Hardening Pass
+
+These issues are resolved by the current hardening pass and should be closed
+after CI is green:
+
+1. `#6 docs(repo): refresh issue backlog after initial implementation`
+   - Status: implemented.
+   - Area: `docs`.
+   - Goal: make roadmap, backlog, docs process, and dogfood notes current.
+   - Acceptance: docs are concise, consistent with the product boundary, and no
+     code or local Codex skill changes are made.
+
+2. `#4 fix(api): require explicit continue message content`
+   - Status: implemented.
+   - Area: `apps/server`, `apps/cli`, `apps/web`, tests.
+   - Goal: every `continue` message must contain the exact instruction sent by
+     the manager or human.
+   - Decision: empty `continue` is invalid; callers must persist an explicit
+     instruction such as "Please continue your work."
+   - Acceptance: server rejects empty `continue` with structured `400`, GUI
+     cannot silently send empty continue, persisted content is explicit, and
+     tests cover rejection plus explicit success.
+
+3. `#9 feat(web): render session trace as readable transcript`
+   - Status: implemented.
+   - Area: `apps/web`, likely server/core transcript helpers.
+   - Goal: make web session detail read like a conversation instead of raw item
+     delta fragments.
+   - Acceptance: default trace shows prompts, complete agent messages, and
+     collapsed tool calls/results; raw JSON remains available as a debug view;
+     aggregation is tested or explicitly justified for v1.
+
+4. `#10 feat(cli): add convenient session result and trace commands`
+   - Status: implemented.
+   - Area: `apps/cli`, likely API/query helpers.
+   - Goal: make normal "what happened?" inspection one short command.
+   - Acceptance: add bounded `session result`, `session trace`,
+     `session watch`, and `sessions recent` flows with structured JSON and
+     cursor/range metadata for manager agents.
+
+5. `#1 test(core/server): add realistic Codex app-server payload fixtures`
+   - Status: implemented.
+   - Area: `packages/core`, `apps/server`.
+   - Goal: harden raw item ingestion and classification against real Codex
+     app-server event shapes.
+   - Acceptance: fixtures cover message deltas/completions, tool calls/results,
+     state, reasoning, errors, malformed/non-protocol input, and raw preservation
+     enough for replay/audit.
+
+6. `#2 fix(server): reconcile persisted sessions on server startup`
+   - Status: implemented.
+   - Area: `apps/server`.
+   - Goal: prevent persisted `starting` or `running` sessions from looking
+     messageable after the server has lost in-memory process handles.
+   - Acceptance: startup reconciliation marks stale sessions deterministically,
+     clears stale pids, records a clear reason, and message send returns a
+     structured error.
+
+7. `#3 test(cli): add smoke tests against a running test server`
+   - Status: implemented.
+   - Area: `apps/cli`, test harness.
+   - Goal: catch server/CLI contract drift beyond mocked fetch tests.
+   - Acceptance: temporary-server smoke tests cover project/workspace/session
+     creation, fake session start, latest, trace, and stable JSON fields.
+
+8. `#7 fix(server): centralize host and port config validation`
+   - Status: implemented.
+   - Area: `apps/server`.
+   - Goal: centralize `CODEXHUB_HOST`, `CODEXHUB_PORT`, and
+     `CODEXHUB_DB_PATH` parsing.
+   - Acceptance: defaults remain unchanged, invalid port fails clearly before
+     Fastify starts, and config parser tests cover default/override/invalid
+     cases.
+
+9. `#8 feat(api): decide and enforce root route alias policy`
+   - Status: implemented.
+   - Area: `apps/server`, `apps/cli`, `apps/web`, docs.
+   - Decision: `/api/v1` is canonical; root aliases remain a supported local
+     convenience surface for CLI/web and are covered by route tests.
+
+10. `#5 refactor(api): share DTO and client contracts across CLI and web`
+    - Status: implemented for first-stage DTO sharing; continue incrementally
+      when new API contracts are added.
+    - Area: `packages/core`, `apps/cli`, `apps/web`.
+    - Goal: reduce duplicate response/request shapes without introducing a
+      heavy generated client.
+    - Acceptance: CLI and web consume shared DTOs/helpers where practical, and
+      type checks catch shared response field drift.
+
+## Backlog Guardrails
+
+- Keep transcript/result convenience focused on inspection, not full transcript
+  replay as the primary manager-agent interface.
+- Keep raw item storage lossless; transcript projections are additive.
+- Keep Manager Agent reads bounded and paginated by default.
+- Keep worker/process hardening local-first; do not add multi-host scheduling,
+  leases, auth, or CI gate coupling in first-stage issues.
+- Capture dogfood friction in `docs/subagent-ops-log.md` when a task reveals a
+  reusable operations lesson.

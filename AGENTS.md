@@ -61,7 +61,7 @@ implementation after the fact.
 ## Delegation Prompt Template
 
 ```text
-You are Worker <name> on Codexhub.
+You are Worker <name> on <cwd>.
 
 Goal:
 - <single concrete outcome>

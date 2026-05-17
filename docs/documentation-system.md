@@ -25,6 +25,8 @@ rediscover them from chat history.
 
 ## Update Rules
 
+- Every task must perform a documentation-impact check before handoff, even when
+  the expected answer is "no docs changed."
 - Update docs in the same PR when public behavior, API/CLI/GUI commands,
   workflow rules, quality gates, or product boundaries change.
 - Keep docs concise and operational. Prefer checklists and concrete examples.
@@ -32,11 +34,14 @@ rediscover them from chat history.
   truth when a short reminder is enough.
 - Treat stale docs as a bug. Fix directly when in scope, or create a follow-up
   issue.
-- Record lessons as concrete observations with context and consequence.
+- Record durable lessons where appropriate as concrete observations with
+  context and consequence. Prefer `docs/subagent-ops-log.md` for coordination
+  friction, `docs/symphony-lessons.md` for imported/rejected Symphony lessons,
+  and `docs/roadmap.md` for product direction or boundary changes.
 
 ## Post-Task Documentation Checklist
 
-After each worker task, check:
+After each worker task, check and report:
 
 - Did the setup or usage surface change? Update `README.md`.
 - Did agent workflow, delegation, review, or quality rules change? Update

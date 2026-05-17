@@ -50,6 +50,17 @@ building Codexhub with parallel workers.
   and handoff requirements.
 - Do not store Codexhub project-specific subagent norms as a local machine
   Codex skill. Keep them in the repository so the policy travels with the code.
+- Dogfood issue refresh found the active backlog is now GitHub issues `#1`
+  through `#10`; local seed issue drafts were stale after initial implementation
+  and needed replacement with current priority order.
+- Codexhub's current result surfaces are technically useful but awkward for
+  daily dogfood: manager agents have to query raw item fragments or remember
+  longer CLI commands to answer "what happened?"
+- Web trace UX currently exposes delta fragments as the primary reading surface.
+  This verifies raw ingestion, but it is not a good manager or maintainer
+  transcript.
+- Empty-message continuation is ambiguous in a durable control plane. Continue
+  actions should record the explicit instruction supplied by the caller.
 
 ## Coordination Friction
 
@@ -72,6 +83,18 @@ building Codexhub with parallel workers.
   has an initial commit.
 - Contract-first route names matter. The CLI and web should consume shared DTO
   definitions or a generated client before parallel UI/CLI work starts.
+- Review specs need to be explicit, read-only by default, and tied to the
+  original task spec. A reviewer cannot reliably judge intent satisfaction from
+  a changed-file list alone.
+- Parallel work needs non-overlapping scopes at file or package granularity.
+  "Server persistence" and "server routes" are still likely to collide unless
+  the task names exact files or sequencing.
+- Dogfood sessions need result/trace convenience early. Raw item APIs are the
+  right storage primitive, but the operator UX needs readable transcript,
+  latest-result, recent-session, and watch commands.
+- Backlog grooming should happen immediately after large implementation passes.
+  Otherwise manager agents may delegate completed seed work instead of the real
+  next bottleneck.
 
 ## Suggested Ownership Map
 

@@ -86,6 +86,8 @@ function extractText(payload: Record<string, unknown>): string | null {
     stringAt(payload, ["params", "outputDelta"]),
     stringAt(payload, ["params", "item", "text"]),
     extractContentText(unknownAt(payload, ["params", "item", "content"])),
+    stringAt(payload, ["params", "error", "message"]),
+    stringAt(payload, ["params", "message"]),
     stringAt(payload, ["error", "message"]),
   ];
 

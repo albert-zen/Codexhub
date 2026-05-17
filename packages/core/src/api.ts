@@ -1,10 +1,14 @@
 import type {
   Item,
+  ItemType,
   Message,
+  MessageMode,
   Page,
   Project,
+  SenderType,
   WorkerSession,
   Workspace,
+  WorkerSessionStatus,
 } from "./types.js";
 
 export interface ErrorResponse {
@@ -16,34 +20,61 @@ export interface ErrorResponse {
 
 export interface CreateProjectRequest {
   name: string;
-  default_repo_url?: string | null;
-  default_workspace_root?: string | null;
-  default_cwd?: string | null;
-  default_branch?: string | null;
-  default_codex_options?: unknown | null;
+  default_repo_url?: string | null | undefined;
+  default_workspace_root?: string | null | undefined;
+  default_cwd?: string | null | undefined;
+  default_branch?: string | null | undefined;
+  default_codex_options?: unknown | null | undefined;
 }
 
 export interface CreateWorkspaceRequest {
-  project_id?: string;
-  project?: string;
-  source_type?: "git" | "local";
-  repo_url?: string | null;
-  path?: string | null;
-  cwd?: string | null;
-  branch?: string | null;
+  project_id?: string | undefined;
+  project?: string | undefined;
+  source_type?: "git" | "local" | undefined;
+  repo_url?: string | null | undefined;
+  path?: string | null | undefined;
+  cwd?: string | null | undefined;
+  branch?: string | null | undefined;
+  commit_sha?: string | null | undefined;
 }
 
 export interface StartSessionRequest {
   workspace_id: string;
-  prompt: string;
-  codex_options?: unknown;
+  project_id?: string | null | undefined;
+  prompt?: string | undefined;
+  initial_message?: string | undefined;
+  codex_options?: unknown | undefined;
 }
 
 export interface SendMessageRequest {
-  mode: "initial" | "steer" | "continue";
+  mode: MessageMode;
   content: string;
-  sender_type?: "manager_agent" | "human" | "system";
-  sender_id?: string | null;
+  sender_type?: SenderType | undefined;
+  sender_id?: string | null | undefined;
+}
+
+export interface SessionListQuery {
+  project_id?: string | null | undefined;
+  workspace_id?: string | null | undefined;
+  status?: WorkerSessionStatus | null | undefined;
+  limit?: number | undefined;
+  cursor?: string | null | undefined;
+}
+
+export interface ItemListQuery {
+  session_id?: string | undefined;
+  type?: ItemType | "all" | null | undefined;
+  limit?: number | undefined;
+  cursor?: string | null | undefined;
+  after?: number | null | undefined;
+  after_sequence?: number | null | undefined;
+  before?: number | null | undefined;
+  before_sequence?: number | null | undefined;
+  recent?: boolean | undefined;
+}
+
+export interface SessionListResponse extends Page<WorkerSession> {
+  sessions: WorkerSession[];
 }
 
 export interface ProjectResponse {

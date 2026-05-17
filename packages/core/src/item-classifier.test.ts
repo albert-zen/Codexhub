@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { codexAppServerPayloadFixtures } from "./fixtures/codex-app-server-payloads.js";
 import { classifyCodexPayload } from "./item-classifier.js";
 
 describe("Codex item classifier", () => {
@@ -41,5 +42,34 @@ describe("Codex item classifier", () => {
 
   it("keeps unknown payloads as raw", () => {
     expect(classifyCodexPayload({ method: "future/event" }).type).toBe("raw");
+  });
+
+  it("classifies realistic app-server payload fixtures without mutating raw payloads", () => {
+    for (const fixture of codexAppServerPayloadFixtures) {
+      const originalPayload = structuredClone(fixture.payload);
+
+      expect(classifyCodexPayload(fixture.payload), fixture.name).toMatchObject(
+        fixture.expected,
+      );
+      expect(fixture.payload, fixture.name).toEqual(originalPayload);
+    }
+  });
+
+  it("covers each stored item type with app-server fixtures", () => {
+    expect(
+      new Set(
+        codexAppServerPayloadFixtures.map((fixture) => fixture.expected.type),
+      ),
+    ).toEqual(
+      new Set([
+        "agentmessage",
+        "toolcall",
+        "toolresult",
+        "error",
+        "state",
+        "reasoning",
+        "raw",
+      ]),
+    );
   });
 });

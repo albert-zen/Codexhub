@@ -35,6 +35,13 @@ export async function createServer(options: CreateServerOptions = {}) {
   const repo = new HubRepository(database.db);
   const runtime = new CodexRuntime(repo);
   const state: ServerState = { database, repo, runtime };
+  const reconciledSessions = repo.reconcileUnavailableTransientSessions();
+  if (reconciledSessions > 0) {
+    app.log.warn(
+      { reconciledSessions },
+      "reconciled persisted sessions without live runtime processes",
+    );
+  }
 
   app.setErrorHandler((error, _request, reply) => {
     const err = error instanceof Error ? error : new Error(String(error));
@@ -245,11 +252,15 @@ function registerApiRoutes(
 
     const body = asRecord(request.body);
     const mode = parseMessageMode(requiredString(body, "mode"));
-    let content = optionalString(body, "content") ?? "";
+    const content = optionalString(body, "content") ?? "";
     if (mode === "steer" && content.trim() === "")
       throw new HttpError(400, "message_required", "steer content is required");
     if (mode === "continue" && content.trim() === "")
-      content = "Please continue.";
+      throw new HttpError(
+        400,
+        "message_required",
+        "continue content is required",
+      );
 
     const message = state.repo.createMessage({
       session_id: session.id,
@@ -326,10 +337,15 @@ function itemPageResponse(
     optionalNumber(query, "after") ??
     optionalNumber(query, "after_sequence") ??
     optionalNumber(query, "cursor");
+  const before =
+    optionalNumber(query, "before") ?? optionalNumber(query, "before_sequence");
   const itemOptions: ItemPageOptions = { type };
+  const recent = optionalBoolean(query, "recent");
   const limit = optionalNumber(query, "limit");
   if (limit !== undefined) itemOptions.limit = limit;
   if (after !== undefined) itemOptions.after = after;
+  if (before !== undefined) itemOptions.before = before;
+  if (recent !== undefined) itemOptions.recent = recent;
   const page = state.repo.listItems(sessionId, itemOptions);
   return { ...page, session_id: sessionId, type };
 }
@@ -414,6 +430,19 @@ function optionalNumber(
   if (typeof value === "string" && value.trim() !== "") {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function optionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = record[key];
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value === "true" || value === "1") return true;
+    if (value === "false" || value === "0") return false;
   }
   return undefined;
 }

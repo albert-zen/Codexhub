@@ -127,6 +127,98 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("prints readable recent traces with bounded item windows", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        const text = String(url);
+        calls.push(text);
+        if (text.endsWith("/sessions/sess_1/messages")) {
+          return jsonResponse({
+            items: [
+              {
+                id: "msg_1",
+                mode: "initial",
+                sender_type: "manager_agent",
+                content: "Inspect the repo.",
+                created_at: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          });
+        }
+        return jsonResponse({
+          items: [
+            {
+              id: "item_1",
+              sequence: 1,
+              type: "agentmessage",
+              codex_item_id: "agent_1",
+              codex_method: "item/agentMessage/delta",
+              text_excerpt: "Ready",
+              created_at: "2026-01-01T00:00:01.000Z",
+            },
+            {
+              id: "item_2",
+              sequence: 2,
+              type: "agentmessage",
+              codex_item_id: "agent_1",
+              codex_method: "item/agentMessage/delta",
+              text_excerpt: " now.",
+              created_at: "2026-01-01T00:00:02.000Z",
+            },
+          ],
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "trace",
+      "sess_1",
+    ]);
+
+    expect(calls).toEqual([
+      "http://api.test/sessions/sess_1/messages",
+      "http://api.test/sessions/sess_1/items?type=all&limit=20&recent=true",
+    ]);
+    expect(output.join("").trim()).toContain(
+      "[input initial manager_agent msg_1]\nInspect the repo.",
+    );
+    expect(output.join("").trim()).toContain("[agent #1-#2]\nReady now.");
+  });
+
+  it("lists recent sessions with a default limit", async () => {
+    const calls: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse({ items: [], next_cursor: null, limit: 10 });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "sessions",
+      "recent",
+      "--project",
+      "proj_1",
+    ]);
+
+    expect(calls).toEqual([
+      "http://api.test/sessions?project_id=proj_1&limit=10",
+    ]);
+  });
+
   it("prints JSON API errors for JSON commands", async () => {
     let exitCode = 0;
     const errors: string[] = [];

@@ -402,14 +402,46 @@ select {
   margin-top: 8px;
 }
 
-.item-row {
+.item-row,
+.transcript-row {
   border: 1px solid #e0e7ec;
   border-radius: 8px;
   margin-bottom: 8px;
   background: #fbfcfd;
 }
 
-.item-meta {
+.transcript-row {
+  border-left-width: 4px;
+}
+
+.transcript-message {
+  border-left-color: #276db6;
+  background: #f8fbff;
+}
+
+.transcript-agent {
+  border-left-color: #23855d;
+  background: #fbfdfc;
+}
+
+.transcript-toolcall,
+.transcript-toolresult {
+  border-left-color: #7a6791;
+}
+
+.transcript-error {
+  border-left-color: #c45142;
+  background: #fffafa;
+}
+
+.transcript-state,
+.transcript-reasoning,
+.transcript-raw {
+  border-left-color: #8b98a3;
+}
+
+.item-meta,
+.transcript-meta {
   display: grid;
   grid-template-columns: 64px 112px minmax(120px, 1fr) 116px;
   gap: 8px;
@@ -419,11 +451,54 @@ select {
   font-size: 12px;
 }
 
+.transcript-meta {
+  grid-template-columns: 120px 112px minmax(120px, 1fr) 116px;
+}
+
 .item-meta span,
-.item-meta time {
+.item-meta time,
+.transcript-meta span,
+.transcript-meta time {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.transcript-row p {
+  margin: 0;
+  padding: 9px;
+  color: #24313b;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-status {
+  justify-self: start;
+  border: 1px solid #d6dee4;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: #ffffff;
+  color: #52606b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.payload-details {
+  border-top: 1px solid #edf1f4;
+}
+
+.payload-details summary {
+  cursor: pointer;
+  padding: 7px 9px;
+  color: #5f6d78;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.payload-details summary:hover {
+  background: #f4f7f9;
 }
 
 pre {
@@ -501,6 +576,10 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .transcript-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .button {
     flex: 1 1 120px;
   }
@@ -508,7 +587,8 @@ pre {
 
 @media (max-width: 520px) {
   .detail-grid,
-  .item-meta {
+  .item-meta,
+  .transcript-meta {
     grid-template-columns: 1fr;
   }
 

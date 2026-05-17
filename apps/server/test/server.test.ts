@@ -1,7 +1,10 @@
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { WorkerSessionStatus } from "@codexhub/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openDatabase } from "../src/database.js";
+import { HubRepository } from "../src/repository.js";
 import { createServer } from "../src/server.js";
 
 type App = Awaited<ReturnType<typeof createServer>>;
@@ -20,6 +23,19 @@ afterEach(async () => {
 });
 
 describe("Codexhub API", () => {
+  it("supports /api/v1 as canonical routes and root routes as local aliases", async () => {
+    const canonical = await post("/api/v1/projects", { name: "canonical" });
+    const alias = await post("/projects", { name: "alias" });
+
+    expect(canonical.project.name).toBe("canonical");
+    expect(alias.project.name).toBe("alias");
+
+    const canonicalList = await get("/api/v1/projects");
+    const aliasList = await get("/projects");
+    expect(canonicalList.items).toHaveLength(2);
+    expect(aliasList.items).toHaveLength(2);
+  });
+
   it("runs the minimum fake worker control loop", async () => {
     const project = await post("/api/v1/projects", {
       name: "demo",
@@ -67,9 +83,21 @@ describe("Codexhub API", () => {
     );
     expect(secondPage.items[0].sequence).toBe(2);
 
+    const emptyContinue = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/messages`,
+      payload: {
+        mode: "continue",
+        content: "",
+        sender_type: "manager_agent",
+      },
+    });
+    expect(emptyContinue.statusCode).toBe(400);
+    expect(emptyContinue.json().error.code).toBe("message_required");
+
     const continued = await post(`/api/v1/sessions/${sessionId}/messages`, {
       mode: "continue",
-      content: "",
+      content: "Please continue.",
       sender_type: "manager_agent",
     });
     expect(continued.message.status).toBe("sent");
@@ -97,6 +125,101 @@ describe("Codexhub API", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe("workspace_build_failed");
   });
+
+  it("reconciles only persisted starting and running sessions on startup", async () => {
+    const dbPath = join(tempDir, "codexhub.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "restart-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "workspace"),
+      cwd: join(tempDir, "workspace"),
+    });
+    const seeded = new Map<WorkerSessionStatus, string>();
+
+    for (const status of [
+      "starting",
+      "running",
+      "awaiting_input",
+      "completed",
+      "failed",
+      "stopped",
+    ] satisfies WorkerSessionStatus[]) {
+      const session = repo.createSession({
+        project_id: project.id,
+        workspace_id: workspace.id,
+      });
+      seeded.set(status, session.id);
+      repo.updateSession(session.id, {
+        status,
+        process_pid: `pid-${status}`,
+        failure_reason: status === "failed" ? "already failed" : null,
+        ended_at:
+          status === "completed" || status === "failed" || status === "stopped"
+            ? new Date().toISOString()
+            : null,
+      });
+    }
+    database.close();
+
+    const restarted = await createServer({ dbPath, logger: false });
+    try {
+      const starting = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "starting")}`,
+      );
+      const running = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "running")}`,
+      );
+      const awaitingInput = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "awaiting_input")}`,
+      );
+      const completed = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "completed")}`,
+      );
+      const failed = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "failed")}`,
+      );
+      const stopped = await getFrom(
+        restarted,
+        `/api/v1/sessions/${requiredSeeded(seeded, "stopped")}`,
+      );
+
+      expect(starting.session.status).toBe("failed");
+      expect(starting.session.failure_reason).toContain("Server restarted");
+      expect(starting.session.process_pid).toBeNull();
+      expect(starting.session.ended_at).toEqual(expect.any(String));
+
+      expect(running.session.status).toBe("failed");
+      expect(running.session.failure_reason).toContain("Server restarted");
+      expect(running.session.process_pid).toBeNull();
+      expect(running.session.ended_at).toEqual(expect.any(String));
+
+      expect(awaitingInput.session.status).toBe("awaiting_input");
+      expect(awaitingInput.session.failure_reason).toBeNull();
+      expect(awaitingInput.session.process_pid).toBe("pid-awaiting_input");
+
+      expect(completed.session.status).toBe("completed");
+      expect(completed.session.failure_reason).toBeNull();
+      expect(completed.session.process_pid).toBe("pid-completed");
+
+      expect(failed.session.status).toBe("failed");
+      expect(failed.session.failure_reason).toBe("already failed");
+      expect(failed.session.process_pid).toBe("pid-failed");
+
+      expect(stopped.session.status).toBe("stopped");
+      expect(stopped.session.failure_reason).toBeNull();
+      expect(stopped.session.process_pid).toBe("pid-stopped");
+    } finally {
+      await restarted.close();
+    }
+  });
 });
 
 async function post(url: string, payload: unknown): Promise<any> {
@@ -110,4 +233,19 @@ async function get(url: string): Promise<any> {
   const response = await app.inject({ method: "GET", url });
   expect(response.statusCode).toBe(200);
   return response.json();
+}
+
+async function getFrom(instance: App, url: string): Promise<any> {
+  const response = await instance.inject({ method: "GET", url });
+  expect(response.statusCode).toBe(200);
+  return response.json();
+}
+
+function requiredSeeded(
+  seeded: Map<WorkerSessionStatus, string>,
+  status: WorkerSessionStatus,
+): string {
+  const id = seeded.get(status);
+  if (!id) throw new Error(`missing seeded ${status} session`);
+  return id;
 }

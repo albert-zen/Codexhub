@@ -48,6 +48,8 @@ export interface ItemPageOptions {
   type?: ItemType | "all" | null;
   limit?: number;
   after?: number | null;
+  before?: number | null;
+  recent?: boolean;
 }
 
 export interface SessionListOptions {
@@ -274,6 +276,21 @@ export class HubRepository {
     return row ? sessionFromRow(row) : null;
   }
 
+  reconcileUnavailableTransientSessions(
+    failureReason = "Server restarted without a live Codex app-server process; session cannot be resumed.",
+  ): number {
+    const now = isoNow();
+    const result = this.db
+      .prepare(
+        `UPDATE worker_sessions
+         SET status = 'failed', failure_reason = ?, process_pid = NULL,
+             ended_at = ?, updated_at = ?
+         WHERE status IN ('starting', 'running')`,
+      )
+      .run(failureReason, now, now);
+    return Number(result.changes);
+  }
+
   updateSession(
     id: string,
     fields: Partial<
@@ -462,14 +479,44 @@ export class HubRepository {
   } {
     const limit = clampLimit(options.limit, 20, 200);
     const after = options.after ?? 0;
+    const before = options.before;
     const type = options.type ?? "agentmessage";
     const noTypeFilter = type === "all";
-    const sql = noTypeFilter
-      ? `SELECT * FROM items WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`
-      : `SELECT * FROM items WHERE session_id = ? AND sequence > ? AND type = ? ORDER BY sequence ASC LIMIT ?`;
-    const rows = noTypeFilter
-      ? this.db.prepare(sql).all(sessionId, after, limit + 1)
-      : this.db.prepare(sql).all(sessionId, after, type, limit + 1);
+
+    if (options.recent && after === 0 && before === undefined) {
+      const sql = noTypeFilter
+        ? `SELECT * FROM items WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`
+        : `SELECT * FROM items WHERE session_id = ? AND type = ? ORDER BY sequence DESC LIMIT ?`;
+      const rows = noTypeFilter
+        ? this.db.prepare(sql).all(sessionId, limit + 1)
+        : this.db.prepare(sql).all(sessionId, type, limit + 1);
+      const items = rows
+        .map(itemFromRow)
+        .slice(0, limit)
+        .sort((left, right) => left.sequence - right.sequence);
+      return {
+        items,
+        limit,
+        next_cursor: null,
+      };
+    }
+
+    const where = ["session_id = ?", "sequence > ?"];
+    const values: Array<string | number> = [sessionId, after];
+    if (!noTypeFilter) {
+      where.push("type = ?");
+      values.push(type);
+    }
+    if (before !== undefined && before !== null) {
+      where.push("sequence < ?");
+      values.push(before);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM items WHERE ${where.join(" AND ")}
+         ORDER BY sequence ASC LIMIT ?`,
+      )
+      .all(...values, limit + 1);
     const items = rows.map(itemFromRow).slice(0, limit);
     const extra = rows.length > limit;
     return {

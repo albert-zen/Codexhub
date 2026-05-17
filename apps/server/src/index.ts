@@ -1,9 +1,9 @@
+import { readServerConfig } from "./config.js";
 import { createServer } from "./server.js";
 
-const port = Number(process.env.CODEXHUB_PORT ?? "4317");
-const host = process.env.CODEXHUB_HOST ?? "127.0.0.1";
+const { host, port, dbPath } = readServerConfig();
 
-const app = await createServer();
+const app = await createServer(dbPath ? { dbPath } : {});
 await app.listen({ host, port });
 
 app.log.info(`Codexhub API listening on http://${host}:${port}`);

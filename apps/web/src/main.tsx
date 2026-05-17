@@ -1,71 +1,49 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import type {
+  ID,
+  Item,
+  ItemType,
+  Message,
+  MessageMode,
+  Project,
+  WorkerSession,
+  WorkerSessionStatus,
+} from "@codexhub/core";
 import "./styles.css";
 
-type ID = string;
+type SendMessageMode = Exclude<MessageMode, "initial">;
 
-type WorkerSessionStatus =
-  | "starting"
-  | "running"
-  | "awaiting_input"
-  | "completed"
-  | "failed"
-  | "stopped";
-
-type MessageMode = "steer" | "continue";
-
-type ItemType =
-  | "agentmessage"
-  | "toolcall"
-  | "toolresult"
-  | "error"
-  | "state"
-  | "reasoning"
-  | "raw";
-
-interface Project {
-  id: ID;
-  name: string;
-  default_repo_url: string | null;
-  default_workspace_root: string | null;
-  default_cwd: string | null;
-  default_branch: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface WorkerSession {
-  id: ID;
-  project_id: ID;
-  workspace_id: ID;
-  status: WorkerSessionStatus;
-  codex_thread_id: string | null;
-  codex_turn_id: string | null;
-  codex_session_key: string | null;
-  process_pid: string | null;
-  last_agent_message_item_id: ID | null;
-  last_agent_message: string | null;
-  last_agent_message_at: string | null;
-  last_item_sequence: number;
-  failure_reason: string | null;
-  started_at: string | null;
-  ended_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface Item {
-  id: ID;
-  session_id: ID;
-  sequence: number;
-  type: ItemType;
-  codex_method: string | null;
-  codex_item_id: string | null;
-  codex_item_type: string | null;
-  created_at: string;
-  raw_payload: unknown;
-  text_excerpt: string | null;
-}
+type TranscriptEntry =
+  | {
+      kind: "message";
+      id: string;
+      at: string;
+      sortTime: number;
+      sortIndex: number;
+      message: Message;
+    }
+  | {
+      kind: "agent";
+      id: string;
+      at: string;
+      sortTime: number;
+      sortIndex: number;
+      sequenceStart: number;
+      sequenceEnd: number;
+      method: string | null;
+      codexItemId: string | null;
+      text: string;
+      items: Item[];
+    }
+  | {
+      kind: "item";
+      id: string;
+      at: string;
+      sortTime: number;
+      sortIndex: number;
+      item: Item;
+    };
 
 const API_BASE = (
   import.meta.env.VITE_CODEXHUB_API ?? "http://127.0.0.1:4317"
@@ -205,9 +183,16 @@ async function fetchItems(
   return listFrom<Item>(body, "items");
 }
 
+async function fetchMessages(sessionId: ID): Promise<Message[]> {
+  const body = await request<unknown>(
+    `/sessions/${encodeURIComponent(sessionId)}/messages`,
+  );
+  return listFrom<Message>(body, "messages");
+}
+
 async function sendMessage(
   sessionId: ID,
-  mode: MessageMode,
+  mode: SendMessageMode,
   content: string,
 ): Promise<void> {
   await request<unknown>(
@@ -236,7 +221,7 @@ async function updateSessionState(
   );
 }
 
-function canSend(status: WorkerSessionStatus, mode: MessageMode): boolean {
+function canSend(status: WorkerSessionStatus, mode: SendMessageMode): boolean {
   if (mode === "steer")
     return status === "running" || status === "awaiting_input";
   return status === "awaiting_input";
@@ -277,14 +262,123 @@ function statusClass(status: WorkerSessionStatus): string {
   return `status status-${status.replace("_", "-")}`;
 }
 
-function displayItem(item: Item): string {
-  if (item.text_excerpt?.trim()) return item.text_excerpt.trim();
-  if (typeof item.raw_payload === "string") return item.raw_payload;
+function displayJson(value: unknown): string {
+  if (typeof value === "string") return value;
   try {
-    return JSON.stringify(item.raw_payload, null, 2);
+    return JSON.stringify(value, null, 2);
   } catch {
     return "No renderable payload.";
   }
+}
+
+function timeValue(value: string): number {
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function buildTranscript(
+  messages: Message[],
+  items: Item[],
+): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  const agentGroups = new Map<
+    string,
+    Extract<TranscriptEntry, { kind: "agent" }>
+  >();
+
+  for (const item of [...items].sort((a, b) => a.sequence - b.sequence)) {
+    if (item.type !== "agentmessage") {
+      entries.push({
+        kind: "item",
+        id: `item:${item.id}`,
+        at: item.created_at,
+        sortTime: timeValue(item.created_at),
+        sortIndex: item.sequence,
+        item,
+      });
+      continue;
+    }
+
+    const key = item.codex_item_id ?? item.id;
+    const existing = agentGroups.get(key);
+    const text = item.text_excerpt ?? "";
+    if (existing) {
+      existing.items.push(item);
+      existing.at = item.created_at;
+      existing.sortTime = Math.min(
+        existing.sortTime,
+        timeValue(item.created_at),
+      );
+      existing.sequenceStart = Math.min(existing.sequenceStart, item.sequence);
+      existing.sequenceEnd = Math.max(existing.sequenceEnd, item.sequence);
+      existing.method = item.codex_method ?? existing.method;
+      if (item.codex_method === "item/agentMessage/delta") {
+        existing.text += text;
+      } else if (text.trim() && text.length >= existing.text.length) {
+        existing.text = text;
+      }
+      continue;
+    }
+
+    const entry: Extract<TranscriptEntry, { kind: "agent" }> = {
+      kind: "agent",
+      id: `agent:${key}:${item.id}`,
+      at: item.created_at,
+      sortTime: timeValue(item.created_at),
+      sortIndex: item.sequence,
+      sequenceStart: item.sequence,
+      sequenceEnd: item.sequence,
+      method: item.codex_method,
+      codexItemId: item.codex_item_id,
+      text,
+      items: [item],
+    };
+    agentGroups.set(key, entry);
+    entries.push(entry);
+  }
+
+  for (const message of messages) {
+    entries.push({
+      kind: "message",
+      id: `message:${message.id}`,
+      at: message.created_at,
+      sortTime: timeValue(message.created_at),
+      sortIndex: -1,
+      message,
+    });
+  }
+
+  return entries.sort((a, b) => {
+    if (a.sortTime !== b.sortTime) return a.sortTime - b.sortTime;
+    const rank = { message: 0, agent: 1, item: 2 };
+    if (rank[a.kind] !== rank[b.kind]) return rank[a.kind] - rank[b.kind];
+    return a.sortIndex - b.sortIndex || a.id.localeCompare(b.id);
+  });
+}
+
+function messageTitle(message: Message): string {
+  if (message.mode === "initial") return "Initial Prompt";
+  if (message.mode === "continue") return "Continue";
+  return "Steer";
+}
+
+function itemTitle(item: Item): string {
+  if (item.type === "toolcall") return "Tool Call";
+  if (item.type === "toolresult") return "Tool Result";
+  if (item.type === "reasoning") return "Reasoning";
+  if (item.type === "error") return "Error";
+  if (item.type === "state") return "State";
+  return "Raw Item";
+}
+
+function itemSummary(item: Item): string {
+  const parts = [
+    item.codex_method,
+    item.codex_item_type,
+    item.codex_item_id ? `id ${shortId(item.codex_item_id)}` : null,
+  ].filter(Boolean);
+  const summary = parts.join(" - ") || "No summary.";
+  return summary.length > 220 ? `${summary.slice(0, 220)}...` : summary;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -300,7 +394,8 @@ function App() {
     null,
   );
   const [items, setItems] = useState<Item[]>([]);
-  const [itemType, setItemType] = useState<ItemType | "all">("agentmessage");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -323,6 +418,11 @@ function App() {
       .sort((a, b) => b.sequence - a.sequence)[0];
     return newestAgentItem?.text_excerpt ?? null;
   }, [items, selectedSession]);
+
+  const transcript = useMemo(
+    () => buildTranscript(messages, items),
+    [items, messages],
+  );
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -369,15 +469,18 @@ function App() {
       setLoadingDetail(true);
       setError(null);
       try {
-        const [nextSession, nextItems] = await Promise.all([
+        const [nextSession, nextItems, nextMessages] = await Promise.all([
           fetchSession(sessionId),
           fetchItems(sessionId, type),
+          fetchMessages(sessionId),
         ]);
         setSelectedSession(nextSession);
         setItems(nextItems);
+        setMessages(nextMessages);
       } catch (loadError) {
         setSelectedSession(null);
         setItems([]);
+        setMessages([]);
         setError(`Session detail: ${getErrorMessage(loadError)}`);
       } finally {
         setLoadingDetail(false);
@@ -414,6 +517,7 @@ function App() {
     if (!selectedSessionId) {
       setSelectedSession(null);
       setItems([]);
+      setMessages([]);
       return;
     }
     void loadDetail(selectedSessionId, itemType);
@@ -426,10 +530,11 @@ function App() {
     return () => window.clearInterval(timer);
   }, [refreshCurrent]);
 
-  async function handleSend(mode: MessageMode) {
+  async function handleSend(mode: SendMessageMode) {
     if (!selectedSession) return;
     const content = message.trim();
     if (mode === "steer" && !content) return;
+    if (mode === "continue" && !content) return;
     setSubmitting(mode);
     setError(null);
     try {
@@ -593,7 +698,7 @@ function App() {
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Steer this worker or leave empty to continue..."
+                  placeholder="Write a steer or continue instruction..."
                   rows={4}
                 />
                 <div className="action-row">
@@ -615,6 +720,7 @@ function App() {
                     onClick={() => void handleSend("continue")}
                     disabled={
                       !canSend(selectedSession.status, "continue") ||
+                      !message.trim() ||
                       submitting !== null
                     }
                   >
@@ -643,9 +749,9 @@ function App() {
                 </div>
               </section>
 
-              <section className="items-block" aria-label="Session items">
+              <section className="items-block" aria-label="Session transcript">
                 <div className="section-heading">
-                  <h3>Items</h3>
+                  <h3>Transcript</h3>
                   <label>
                     Type
                     <select
@@ -664,21 +770,95 @@ function App() {
                 </div>
 
                 <div className="item-list" aria-busy={loadingDetail}>
-                  {items.map((item) => (
-                    <article className="item-row" key={item.id}>
-                      <div className="item-meta">
-                        <strong>#{item.sequence}</strong>
-                        <span>{item.type}</span>
-                        <span>
-                          {item.codex_method ?? item.codex_item_type ?? "item"}
-                        </span>
-                        <time>{formatDate(item.created_at)}</time>
-                      </div>
-                      <pre>{displayItem(item)}</pre>
-                    </article>
-                  ))}
-                  {!loadingDetail && items.length === 0 ? (
-                    <p className="empty">No items match this filter.</p>
+                  {transcript.map((entry) => {
+                    if (entry.kind === "message") {
+                      return (
+                        <article
+                          className="transcript-row transcript-message"
+                          key={entry.id}
+                        >
+                          <div className="transcript-meta">
+                            <strong>{messageTitle(entry.message)}</strong>
+                            <span>{entry.message.sender_type}</span>
+                            <span className="message-status">
+                              {entry.message.status}
+                            </span>
+                            <time>{formatDate(entry.at)}</time>
+                          </div>
+                          <p>
+                            {compactText(entry.message.content, "Continue.")}
+                          </p>
+                          {entry.message.error ? (
+                            <details className="payload-details">
+                              <summary>Message error</summary>
+                              <pre>{entry.message.error}</pre>
+                            </details>
+                          ) : null}
+                        </article>
+                      );
+                    }
+
+                    if (entry.kind === "agent") {
+                      return (
+                        <article
+                          className="transcript-row transcript-agent"
+                          key={entry.id}
+                        >
+                          <div className="transcript-meta">
+                            <strong>Agent</strong>
+                            <span>
+                              #{entry.sequenceStart}
+                              {entry.sequenceEnd !== entry.sequenceStart
+                                ? `-${entry.sequenceEnd}`
+                                : ""}
+                            </span>
+                            <span>{entry.method ?? "agentmessage"}</span>
+                            <time>{formatDate(entry.at)}</time>
+                          </div>
+                          <p>{compactText(entry.text)}</p>
+                          <details className="payload-details">
+                            <summary>
+                              Raw payload{entry.items.length === 1 ? "" : "s"}
+                            </summary>
+                            <pre>
+                              {displayJson(
+                                entry.items.length === 1
+                                  ? entry.items[0]?.raw_payload
+                                  : entry.items.map((item) => item.raw_payload),
+                              )}
+                            </pre>
+                          </details>
+                        </article>
+                      );
+                    }
+
+                    return (
+                      <article
+                        className={`transcript-row transcript-${entry.item.type}`}
+                        key={entry.id}
+                      >
+                        <div className="transcript-meta">
+                          <strong>{itemTitle(entry.item)}</strong>
+                          <span>#{entry.item.sequence}</span>
+                          <span>
+                            {entry.item.codex_method ??
+                              entry.item.codex_item_type ??
+                              entry.item.type}
+                          </span>
+                          <time>{formatDate(entry.at)}</time>
+                        </div>
+                        <p>{itemSummary(entry.item)}</p>
+                        <details className="payload-details">
+                          <summary>Payload details</summary>
+                          <pre>{displayJson(entry.item.raw_payload)}</pre>
+                        </details>
+                      </article>
+                    );
+                  })}
+                  {!loadingDetail && transcript.length === 0 ? (
+                    <p className="empty">
+                      No transcript entries match this filter.
+                    </p>
                   ) : null}
                 </div>
               </section>

@@ -5,10 +5,15 @@ manager agent or human operator a small, durable surface for starting workers,
 reading their status, and sending follow-up instructions without replaying a full
 Codex thread into context.
 
-The first usable loop is:
+The first usable loop now exists:
 
-create workspace -> start session -> save raw items -> read latest agentmessage ->
-list filtered items -> send steer/continue -> inspect in GUI.
+create project/workspace -> start session -> save raw items -> read latest
+agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
+
+The current product step is hardening that loop for repeated dogfood use:
+parallel workspace safety, longer-running worker supervision, and review/task
+metadata. The first readable transcript/result surfaces now exist, so normal
+inspection no longer requires reading JSON deltas.
 
 ## V1 Outcome
 
@@ -28,35 +33,35 @@ Codexhub v1 is complete when a local operator can:
 The repository currently contains:
 
 - `packages/core` with shared TypeScript types, item classification, and session
-  state helpers.
+  state helpers, plus shared API DTOs for the main HTTP contracts.
 - `apps/server` with Fastify routes, SQLite migrations/repository code,
   workspace creation, Codex app-server launch, raw item ingestion, message
   dispatch, and a fake worker path for integration tests.
-- `apps/cli` with project, workspace, session, item, latest-message, send, and
-  stop commands. Leaf commands support `--json`.
-- `apps/web` with a compact project/session/detail UI, item type filter,
-  latest agent message, send steer/continue, stop, and complete actions.
+- `apps/cli` with project, workspace, session, item, latest/result/trace/watch,
+  send, stop, and recent-session commands. Leaf commands support `--json`.
+- `apps/web` with a compact project/session/detail UI, readable transcript,
+  item type filter, latest agent message, send steer/continue, stop, and
+  complete actions.
 - Docs for Symphony lessons, subagent operations, roadmap, and first issue
   drafts.
 - Top-level `pnpm build`, `pnpm check`, `pnpm test`, and `pnpm format` scripts
   all pass.
 
-The following work remains open:
+The following work remains open next:
 
-- Make session trace readable as a transcript instead of raw delta fragments.
-- Add low-context result/trace/watch CLI shortcuts with bounded windows and
-  cursor/range pagination.
-- Require explicit continue messages instead of empty-message continuation.
-- Broaden real Codex app-server fixture coverage beyond the fake worker path.
-- Harden process lifecycle behavior across server restarts.
 - Add explicit cleanup/delete workspace endpoints if needed.
-- Add smoke tests that drive the built CLI against a running test server.
-- Decide whether root route aliases should remain after Manager Agent clients
-  converge on `/api/v1`.
+- Broaden real Codex app-server fixture coverage as more live payloads are
+  observed.
+- Improve process cleanup behavior for stopped or failed real sessions.
+- Continue sharing API DTO/client contracts across CLI and web where it removes
+  real duplication without creating a large client abstraction.
 - Define and automate task-spec, worker, review-subagent, and quality-gate
   workflows for larger parallel builds.
-- Define a documentation system so task outcomes, workflow friction, and lessons
-  are captured after each worker run.
+- Keep using the documentation system so task outcomes, workflow friction, and
+  lessons are captured after each worker run.
+
+First-stage priority order is tracked in `docs/github-issues.md`; the active
+GitHub issue tracker is the execution source of truth.
 
 ## Product Principles
 
@@ -196,12 +201,14 @@ agent message.
 ### Phase 4: Message Flow
 
 Status: complete for persisted `initial`, `steer`, and `continue` messages with
-fake-worker integration coverage and real app-server dispatch paths.
+fake-worker integration coverage, real app-server dispatch paths, and explicit
+non-empty `continue` content across API, CLI, and GUI.
 
 - Queue manager and human messages.
 - Enforce `canSendMessage` before dispatch.
 - Dispatch `steer` and `continue` messages to the active Codex session.
 - Record sent/failed message state and errors.
+- Require explicit, auditable `continue` content from every caller.
 
 ### Phase 5: Operator Surfaces
 
@@ -214,22 +221,28 @@ Status: complete for the first CLI and GUI loop.
 
 ### Phase 6: Hardening
 
-Status: open.
+Status: complete for the first hardening pass.
 
 - Add fixture coverage for real Codex payloads.
-- Add process cleanup behavior for stopped or failed sessions.
+- Reconcile persisted `starting` and `running` sessions after server restart
+  when no live runtime process exists.
+- Centralize and validate host, port, and database runtime config.
+- Decide and test the route policy: `/api/v1` is canonical, root routes remain
+  supported local aliases for CLI/web convenience.
 - Add README examples for the full local loop.
 - Add smoke tests that prove server, CLI, and core contracts remain aligned.
 
 ### Phase 7: Readable Trace And Query Ergonomics
 
-Status: open.
+Status: complete for the first readable result and trace pass.
 
 - Build a transcript projection that aggregates Codex agent-message deltas into
   complete readable messages.
 - Show sent prompts/messages, full agent messages, and collapsible tool calls in
   chronological order.
 - Keep raw JSONL/item inspection available as an explicit debug mode.
+- Make the web session detail default to readable transcript/result inspection,
+  not raw delta fragments.
 - Add CLI shortcuts for `session result`, `session trace`, `session watch`, and
   `sessions recent`.
 - Default result queries to a recent bounded window, such as the latest 10 or 20
@@ -298,13 +311,12 @@ Status: open.
 
 ### Phase 11: Automation And CI Integration
 
-Status: open.
+Status: partially complete.
 
-- Add repository CI for `pnpm format`, `pnpm check`, `pnpm test`, and
-  `pnpm build`.
+- Repository CI runs `pnpm quality`.
 - Add package-level CI jobs when the repo grows enough to benefit from faster
   feedback.
-- Add CLI/server smoke tests that run against a temporary Codexhub server.
+- CLI/server smoke tests run against a temporary Codexhub server.
 - Add optional long-running dogfood jobs that create Codexhub sessions and
   report discovered issues without mutating code.
 - Keep CI as an external validation surface; do not turn Codexhub itself into a

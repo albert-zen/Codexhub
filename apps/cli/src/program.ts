@@ -1,5 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { Command, InvalidArgumentError } from "commander";
+import type {
+  CreateProjectRequest,
+  CreateWorkspaceRequest,
+  ItemListQuery,
+  ItemType,
+  MessageMode,
+  SendMessageRequest,
+  SenderType,
+  SessionListQuery,
+  StartSessionRequest,
+  WorkerSessionStatus,
+} from "@codexhub/core";
 import { ApiClient, ApiError, type FetchLike, type JsonObject } from "./api.js";
 
 type WriteFn = (text: string) => void;
@@ -58,6 +70,17 @@ interface SessionItemsOptions extends BaseCommandOptions {
   limit?: number;
   cursor?: string;
   afterSequence?: number;
+  beforeSequence?: number;
+  recent?: boolean;
+}
+
+interface SessionTraceOptions extends BaseCommandOptions {
+  type?: string;
+  limit?: number;
+  cursor?: string;
+  afterSequence?: number;
+  beforeSequence?: number;
+  recent?: boolean;
 }
 
 interface SessionSendOptions extends BaseCommandOptions {
@@ -104,7 +127,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .option("--codex-options <json>", "Default Codex options as JSON")
     .action((opts: ProjectCreateOptions) =>
       runAction(env, opts, async () => {
-        const body = omitUndefined({
+        const body = omitUndefined<CreateProjectRequest>({
           name: opts.name,
           default_repo_url: opts.repoUrl,
           default_workspace_root: opts.workspaceRoot,
@@ -134,7 +157,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .option("--commit-sha <sha>", "Workspace commit SHA")
     .action((opts: WorkspaceCreateOptions) =>
       runAction(env, opts, async () => {
-        const body = omitUndefined({
+        const body = omitUndefined<CreateWorkspaceRequest>({
           project_id: opts.project,
           source_type: parseWorkspaceSource(opts.source),
           repo_url: opts.repoUrl,
@@ -168,7 +191,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
           opts.file,
           messageParts,
         );
-        const body = omitUndefined({
+        const body = omitUndefined<StartSessionRequest>({
           project_id: opts.project,
           workspace_id: opts.workspace,
           initial_message: initialMessage,
@@ -207,6 +230,108 @@ export function createProgram(env: CliEnvironment = {}): Command {
       }),
     );
 
+  jsonOption(
+    session
+      .command("result")
+      .description("Print a compact result for the latest agent message"),
+  )
+    .argument("<session-id>", "Session ID")
+    .action((sessionId: string, opts: BaseCommandOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/sessions/${encodeURIComponent(sessionId)}/latest`,
+        );
+        printResult(env, opts, result, () => formatLatest(result));
+      }),
+    );
+
+  jsonOption(session.command("trace").description("Print a readable trace"))
+    .argument("<session-id>", "Session ID")
+    .option("--type <type>", "Item type filter", "all")
+    .option("--limit <n>", "Maximum number of items", parsePositiveInt, 20)
+    .option("--cursor <cursor>", "Page cursor")
+    .option(
+      "--after-sequence <n>",
+      "Only items after this sequence",
+      parseNonNegativeInt,
+    )
+    .option(
+      "--before-sequence <n>",
+      "Only items before this sequence",
+      parseNonNegativeInt,
+    )
+    .option("--no-recent", "Read from the beginning unless a cursor is given")
+    .action((sessionId: string, opts: SessionTraceOptions) =>
+      runAction(env, opts, async () => {
+        const api = client(program, env);
+        const [messages, items] = await Promise.all([
+          api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+          api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
+            query: omitQuery<ItemListQuery>({
+              type: parseOptionalItemType(opts.type),
+              limit: opts.limit,
+              cursor: opts.cursor,
+              after_sequence: opts.afterSequence,
+              before_sequence: opts.beforeSequence,
+              recent:
+                opts.afterSequence === undefined &&
+                opts.beforeSequence === undefined &&
+                opts.cursor === undefined
+                  ? opts.recent !== false
+                  : undefined,
+            }),
+          }),
+        ]);
+        const result = { session_id: sessionId, messages, items };
+        printResult(env, opts, result, () => formatTrace(messages, items));
+      }),
+    );
+
+  jsonOption(
+    session
+      .command("watch")
+      .description("Print the latest readable trace window"),
+  )
+    .argument("<session-id>", "Session ID")
+    .option("--type <type>", "Item type filter", "all")
+    .option("--limit <n>", "Maximum number of items", parsePositiveInt, 20)
+    .option(
+      "--after-sequence <n>",
+      "Only items after this sequence",
+      parseNonNegativeInt,
+    )
+    .action((sessionId: string, opts: SessionTraceOptions) =>
+      runAction(env, opts, async () => {
+        const api = client(program, env);
+        const [sessionDetail, messages, items] = await Promise.all([
+          api.get(`/sessions/${encodeURIComponent(sessionId)}`),
+          api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+          api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
+            query: omitQuery<ItemListQuery>({
+              type: parseOptionalItemType(opts.type),
+              limit: opts.limit,
+              after_sequence: opts.afterSequence,
+              recent: opts.afterSequence === undefined,
+            }),
+          }),
+        ]);
+        const result = {
+          session_id: sessionId,
+          session: unwrapRecord(sessionDetail, "session"),
+          messages,
+          items,
+        };
+        printResult(env, opts, result, () => {
+          const sessionRecord = unwrapRecord(sessionDetail, "session");
+          return [
+            formatSessionInspect(sessionRecord),
+            "",
+            formatTrace(messages, items),
+          ].join("\n");
+        });
+      }),
+    );
+
   jsonOption(session.command("items").description("List session items"))
     .argument("<session-id>", "Session ID")
     .option("--type <type>", "Item type filter")
@@ -217,16 +342,24 @@ export function createProgram(env: CliEnvironment = {}): Command {
       "Only items after this sequence",
       parseNonNegativeInt,
     )
+    .option(
+      "--before-sequence <n>",
+      "Only items before this sequence",
+      parseNonNegativeInt,
+    )
+    .option("--recent", "Read the latest matching items")
     .action((sessionId: string, opts: SessionItemsOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get(
           `/sessions/${encodeURIComponent(sessionId)}/items`,
           {
-            query: omitQuery({
-              type: opts.type,
+            query: omitQuery<ItemListQuery>({
+              type: parseOptionalItemType(opts.type),
               limit: opts.limit,
               cursor: opts.cursor,
               after_sequence: opts.afterSequence,
+              before_sequence: opts.beforeSequence,
+              recent: opts.recent,
             }),
           },
         );
@@ -254,7 +387,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
           if (!content || content.trim() === "")
             throw new Error("message content is required");
 
-          const body = omitUndefined({
+          const body = omitUndefined<SendMessageRequest>({
             mode: parseMessageMode(opts.mode),
             content,
             sender_type: parseSenderType(opts.sender),
@@ -297,10 +430,30 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .action((opts: SessionsListOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get("/sessions", {
-          query: omitQuery({
+          query: omitQuery<SessionListQuery>({
             project_id: opts.project,
             workspace_id: opts.workspace,
-            status: opts.status,
+            status: parseOptionalSessionStatus(opts.status),
+            limit: opts.limit,
+            cursor: opts.cursor,
+          }),
+        });
+        printResult(env, opts, result, () => formatSessions(result));
+      }),
+    );
+  jsonOption(sessions.command("recent").description("List recent sessions"))
+    .option("--project <id>", "Project ID filter")
+    .option("--workspace <id>", "Workspace ID filter")
+    .option("--status <status>", "Session status filter")
+    .option("--limit <n>", "Maximum number of sessions", parsePositiveInt, 10)
+    .option("--cursor <cursor>", "Page cursor")
+    .action((opts: SessionsListOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get("/sessions", {
+          query: omitQuery<SessionListQuery>({
+            project_id: opts.project,
+            workspace_id: opts.workspace,
+            status: parseOptionalSessionStatus(opts.status),
             limit: opts.limit,
             cursor: opts.cursor,
           }),
@@ -397,18 +550,18 @@ function setExitCode(env: CliEnvironment, code: number): void {
   process.exitCode = code;
 }
 
-function omitUndefined<T extends JsonObject>(value: T): JsonObject {
+function omitUndefined<T extends object>(value: T): JsonObject {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   ) as JsonObject;
 }
 
-function omitQuery(
-  value: Record<string, string | number | boolean | null | undefined>,
+function omitQuery<T extends object>(
+  value: T,
 ): Record<string, string | number | boolean | null | undefined> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
-  );
+  ) as Record<string, string | number | boolean | null | undefined>;
 }
 
 function parseJsonOption(
@@ -444,20 +597,56 @@ function parseInteger(value: string, min: number): number {
   return parsed;
 }
 
-function parseWorkspaceSource(value: string): string {
+function parseWorkspaceSource(value: string): "local" | "git" {
   if (value === "local" || value === "git") return value;
   throw new Error("--source must be local or git");
 }
 
-function parseMessageMode(value: string): string {
+function parseMessageMode(value: string): MessageMode {
   if (value === "steer" || value === "continue") return value;
   throw new Error("--mode must be steer or continue");
 }
 
-function parseSenderType(value: string): string {
+function parseSenderType(value: string): SenderType {
   if (value === "manager_agent" || value === "human" || value === "system")
     return value;
   throw new Error("--sender must be manager_agent, human, or system");
+}
+
+function parseOptionalItemType(
+  value: string | undefined,
+): ItemType | "all" | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "all" ||
+    value === "agentmessage" ||
+    value === "toolcall" ||
+    value === "toolresult" ||
+    value === "error" ||
+    value === "state" ||
+    value === "reasoning" ||
+    value === "raw"
+  ) {
+    return value;
+  }
+  throw new Error("--type is not a supported item type");
+}
+
+function parseOptionalSessionStatus(
+  value: string | undefined,
+): WorkerSessionStatus | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "starting" ||
+    value === "running" ||
+    value === "awaiting_input" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "stopped"
+  ) {
+    return value;
+  }
+  throw new Error("--status is not a supported session status");
 }
 
 async function readContent(
@@ -577,6 +766,134 @@ function formatItems(value: unknown): string {
     .join("\n");
 }
 
+function formatTrace(messagesValue: unknown, itemsValue: unknown): string {
+  const messages = extractItems(messagesValue, "messages").map((message) => ({
+    kind: "message" as const,
+    created_at: stringField(message, "created_at") ?? "",
+    mode: stringField(message, "mode") ?? "message",
+    sender: stringField(message, "sender_type") ?? "unknown",
+    id: stringField(message, "id") ?? "",
+    text: stringField(message, "content") ?? "",
+  }));
+  const itemEntries = itemTraceEntries(extractItems(itemsValue, "items"));
+  const entries = [...messages, ...itemEntries].sort((left, right) => {
+    const byTime = left.created_at.localeCompare(right.created_at);
+    if (byTime !== 0) return byTime;
+    if (left.kind === right.kind) return 0;
+    return left.kind === "message" ? -1 : 1;
+  });
+
+  if (entries.length === 0) return "No trace entries.";
+
+  return entries
+    .map((entry) => {
+      if (entry.kind === "message") {
+        return [
+          `[input ${entry.mode} ${entry.sender} ${shortToken(entry.id)}]`,
+          entry.text,
+        ].join("\n");
+      }
+
+      if (entry.type === "agentmessage") {
+        return [`[agent ${entry.sequenceLabel}]`, entry.text].join("\n");
+      }
+
+      return `[${entry.type} ${entry.sequenceLabel}] ${entry.summary}`;
+    })
+    .join("\n\n");
+}
+
+function itemTraceEntries(items: Array<Record<string, unknown>>): Array<{
+  kind: "item";
+  created_at: string;
+  type: string;
+  sequenceLabel: string;
+  text: string;
+  summary: string;
+}> {
+  const entries: Array<{
+    kind: "item";
+    created_at: string;
+    type: string;
+    sequenceLabel: string;
+    text: string;
+    summary: string;
+  }> = [];
+  const consumed = new Set<string>();
+
+  for (const item of items) {
+    const id = stringField(item, "id") ?? "";
+    if (id && consumed.has(id)) continue;
+
+    const type = stringField(item, "type") ?? "raw";
+    const sequence = numberField(item, "sequence");
+    const created = stringField(item, "created_at") ?? "";
+    if (type !== "agentmessage") {
+      entries.push({
+        kind: "item",
+        created_at: created,
+        type,
+        sequenceLabel: sequence === null ? "?" : `#${sequence}`,
+        text: "",
+        summary: itemSummary(item),
+      });
+      continue;
+    }
+
+    const codexItemId = stringField(item, "codex_item_id");
+    const group = codexItemId
+      ? items.filter(
+          (candidate) =>
+            stringField(candidate, "type") === "agentmessage" &&
+            stringField(candidate, "codex_item_id") === codexItemId,
+        )
+      : [item];
+    for (const grouped of group) {
+      const groupedId = stringField(grouped, "id");
+      if (groupedId) consumed.add(groupedId);
+    }
+
+    const sequences = group
+      .map((entry) => numberField(entry, "sequence"))
+      .filter((entry): entry is number => entry !== null);
+    const fullText =
+      [...group]
+        .reverse()
+        .find(
+          (entry) =>
+            stringField(entry, "codex_method") !== "item/agentMessage/delta" &&
+            stringField(entry, "text_excerpt"),
+        ) ?? null;
+    const text =
+      stringField(fullText, "text_excerpt") ??
+      group
+        .map((entry) => stringField(entry, "text_excerpt") ?? "")
+        .join("")
+        .trim();
+
+    entries.push({
+      kind: "item",
+      created_at: created,
+      type,
+      sequenceLabel: sequenceRange(sequences),
+      text: text || "(empty agent message)",
+      summary: text ? oneLine(text, 160) : "(empty agent message)",
+    });
+  }
+
+  return entries;
+}
+
+function itemSummary(item: Record<string, unknown>): string {
+  const text = stringField(item, "text_excerpt");
+  if (text) return oneLine(text, 180);
+  const method = stringField(item, "codex_method");
+  const itemType = stringField(item, "codex_item_type");
+  return (
+    method ?? itemType ?? oneLine(JSON.stringify(item.raw_payload) ?? "", 180)
+  );
+}
+
 function formatSessions(value: unknown): string {
   const sessions = extractItems(value, "sessions");
   if (sessions.length === 0) return "No sessions.";
@@ -653,4 +970,15 @@ function oneLine(value: string, maxLength: number): string {
   const line = value.replace(/\s+/g, " ").trim();
   if (line.length <= maxLength) return line;
   return `${line.slice(0, maxLength - 3)}...`;
+}
+
+function shortToken(value: string): string {
+  return value.length > 10 ? value.slice(0, 10) : value || "-";
+}
+
+function sequenceRange(values: number[]): string {
+  if (values.length === 0) return "#?";
+  const first = Math.min(...values);
+  const last = Math.max(...values);
+  return first === last ? `#${first}` : `#${first}-#${last}`;
 }

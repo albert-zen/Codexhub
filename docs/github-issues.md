@@ -125,3 +125,25 @@ after CI is green:
   leases, auth, or CI gate coupling in first-stage issues.
 - Capture dogfood friction in `docs/subagent-ops-log.md` when a task reveals a
   reusable operations lesson.
+
+## Next Backlog
+
+The next small issues created after the first hardening pass are:
+
+1. `#11 docs(readme): document the full local Codexhub loop`
+   - Copy-pasteable server/CLI/fake-worker/result/trace workflow.
+2. `#12 feat(workspace): add safe workspace cleanup flow`
+   - Conservative cleanup/delete semantics with path safety tests.
+3. `#13 feat(workspace): add git worktree workspace mode`
+   - Isolated write scopes for parallel worker sessions.
+4. `#14 feat(web): paginate readable session transcript`
+   - Load transcript windows without rereading the first 200 items.
+5. `#15 feat(session): attach task spec metadata to worker sessions`
+   - Persist immutable task intent/scope/acceptance criteria references.
+6. `#16 feat(control-plane): add minimal worker run groups`
+   - Observe coordinated batches without becoming a project management system.
+7. `#17 ci(repo): address GitHub Actions runtime warnings`
+   - Handle Node 24 action runtime and Windows runner transition notices.
+8. `#18 feat(session): track review-gate status metadata`
+   - Track worker/reviewer progress as observability metadata, not a validation
+     gate.

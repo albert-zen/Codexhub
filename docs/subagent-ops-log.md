@@ -95,6 +95,18 @@ building Codexhub with parallel workers.
 - Backlog grooming should happen immediately after large implementation passes.
   Otherwise manager agents may delegate completed seed work instead of the real
   next bottleneck.
+- Dogfooding `codexhub session trace <id> --limit 5` against a real stored
+  session showed the new trace command gives useful bounded context, but the
+  first web transcript implementation still needs explicit pagination for long
+  sessions. Tracked as GitHub issue `#14`.
+- CI can be green while still surfacing platform drift. The successful run for
+  `91038bb` warned about GitHub Actions Node 20 deprecation and
+  `windows-latest` redirection; track those as normal backlog, not as immediate
+  blockers. Tracked as `#17`.
+- When a commit closes a large batch of issues, create the next issue batch
+  immediately while the dogfood findings are fresh. This keeps the manager's
+  next planning session focused on current bottlenecks rather than stale seed
+  work.
 
 ## Suggested Ownership Map
 

@@ -49,12 +49,17 @@ The repository currently contains:
 
 The following work remains open next:
 
+- Document the complete local loop in README (`#11`).
 - Add explicit cleanup/delete workspace endpoints if needed.
 - Broaden real Codex app-server fixture coverage as more live payloads are
   observed.
 - Improve process cleanup behavior for stopped or failed real sessions.
 - Continue sharing API DTO/client contracts across CLI and web where it removes
   real duplication without creating a large client abstraction.
+- Add worktree-aware workspace creation for parallel worker sessions (`#13`).
+- Add task spec metadata and minimal run groups so large batches can be
+  observed without becoming project management (`#15`, `#16`).
+- Add review-gate status metadata as observability, not validation (`#18`).
 - Define and automate task-spec, worker, review-subagent, and quality-gate
   workflows for larger parallel builds.
 - Keep using the documentation system so task outcomes, workflow friction, and

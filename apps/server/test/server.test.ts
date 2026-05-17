@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -190,6 +191,46 @@ describe("Codexhub API", () => {
     expect(response.json().error.code).toBe("workspace_build_failed");
   });
 
+  it("creates git worktree workspaces with isolated branches", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "worktree-demo",
+      default_workspace_root: tempDir,
+    });
+    const repoPath = join(tempDir, "source repo");
+    await initGitRepo(repoPath);
+
+    const worktreePath = join(tempDir, "worker one");
+    const workspace = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "git",
+      mode: "worktree",
+      repo_path: repoPath,
+      path: worktreePath,
+      branch: "codexhub/worktree-one",
+    });
+
+    expect(workspace.workspace.source_type).toBe("git");
+    expect(workspace.workspace.repo_url).toBe(await realpath(repoPath));
+    expect(workspace.workspace.path).toBe(await realpath(worktreePath));
+    expect(workspace.workspace.branch).toBe("codexhub/worktree-one");
+    await expect(access(join(worktreePath, ".git"))).resolves.toBeUndefined();
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspaces",
+      payload: {
+        project_id: project.project.id,
+        source_type: "git",
+        mode: "worktree",
+        repo_path: repoPath,
+        path: join(tempDir, "worker two"),
+        branch: "codexhub/worktree-one",
+      },
+    });
+    expect(duplicate.statusCode).toBe(400);
+    expect(duplicate.json().error.code).toBe("workspace_build_failed");
+  });
+
   it("archives or deletes workspaces only when no active sessions remain", async () => {
     const project = await post("/api/v1/projects", {
       name: "cleanup-demo",
@@ -374,4 +415,34 @@ function requiredSeeded(
   const id = seeded.get(status);
   if (!id) throw new Error(`missing seeded ${status} session`);
   return id;
+}
+
+async function initGitRepo(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
+  runGit(["init", path]);
+  await writeFile(join(path, "README.md"), "# demo\n", "utf8");
+  runGit(["-C", path, "add", "README.md"]);
+  runGit([
+    "-C",
+    path,
+    "-c",
+    "user.name=Codexhub Test",
+    "-c",
+    "user.email=codexhub@example.test",
+    "commit",
+    "-m",
+    "initial",
+  ]);
+}
+
+function runGit(args: string[]): void {
+  const result = spawnSync("git", args, {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if ((result.status ?? 1) !== 0) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
+    );
+  }
 }

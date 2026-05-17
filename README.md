@@ -54,6 +54,12 @@ Workspace cleanup archives the workspace record by default. Add `--delete-files`
 only when you want Codexhub to remove the workspace directory after safety
 checks.
 
+For parallel work on one repository, create an isolated git worktree workspace:
+
+```powershell
+pnpm --filter @codexhub/cli dev -- workspace create --project $Project.project.id --source git --mode worktree --repo-path D:\desktop\codex-hub --path D:\desktop\Codexhub-workspaces\worker-one --branch codexhub/worker-one --json
+```
+
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
 

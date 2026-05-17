@@ -34,7 +34,9 @@ export interface CreateWorkspaceRequest {
   project_id?: string | undefined;
   project?: string | undefined;
   source_type?: "git" | "local" | undefined;
+  mode?: "standard" | "worktree" | undefined;
   repo_url?: string | null | undefined;
+  repo_path?: string | null | undefined;
   path?: string | null | undefined;
   cwd?: string | null | undefined;
   branch?: string | null | undefined;

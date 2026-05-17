@@ -12,7 +12,9 @@ import type { Project, Workspace } from "@codexhub/core";
 export interface WorkspaceBuildRequest {
   project: Project;
   source_type?: "git" | "local" | null;
+  mode?: "worktree" | null;
   repo_url?: string | null;
+  repo_path?: string | null;
   path?: string | null;
   cwd?: string | null;
   branch?: string | null;
@@ -31,8 +33,14 @@ export interface BuiltWorkspace {
 }
 
 export function buildWorkspace(input: WorkspaceBuildRequest): BuiltWorkspace {
-  const repoUrl = clean(input.repo_url ?? input.project.default_repo_url);
-  const sourceType = input.source_type ?? (repoUrl ? "git" : "local");
+  const mode = input.mode ?? null;
+  const repoUrl = clean(
+    input.repo_path ?? input.repo_url ?? input.project.default_repo_url,
+  );
+  const sourceType =
+    mode === "worktree"
+      ? "git"
+      : (input.source_type ?? (repoUrl ? "git" : "local"));
   const branch = clean(input.branch ?? input.project.default_branch);
   const workspacePath = resolveWorkspacePath(
     input.project,
@@ -44,7 +52,15 @@ export function buildWorkspace(input: WorkspaceBuildRequest): BuiltWorkspace {
     clean(input.cwd ?? input.project.default_cwd),
   );
 
-  if (sourceType === "git") {
+  if (mode === "worktree") {
+    if (!repoUrl)
+      throw new Error("repo_path or repo_url is required for worktree mode");
+    prepareGitWorktree(
+      workspacePath,
+      repoUrl,
+      branch ?? defaultWorktreeBranch(workspacePath),
+    );
+  } else if (sourceType === "git") {
     if (!repoUrl) throw new Error("repo_url is required for git workspaces");
     prepareGitWorkspace(workspacePath, repoUrl, branch);
   } else {
@@ -72,7 +88,7 @@ export function buildWorkspace(input: WorkspaceBuildRequest): BuiltWorkspace {
 
   return {
     source_type: sourceType,
-    repo_url: repoUrl,
+    repo_url: mode === "worktree" && repoUrl ? canonicalPath(repoUrl) : repoUrl,
     path: canonicalWorkspace,
     cwd: canonicalCwd,
     branch: currentBranch === "HEAD" ? branch : currentBranch,
@@ -147,6 +163,35 @@ function prepareGitWorkspace(
   if (branch) {
     checkoutBranch(path, branch);
   }
+}
+
+function prepareGitWorktree(
+  path: string,
+  repoPath: string,
+  branch: string,
+): void {
+  const canonicalRepo = canonicalPath(repoPath);
+  if (!existsSync(join(canonicalRepo, ".git"))) {
+    throw new Error(`worktree source is not a git repository: ${repoPath}`);
+  }
+  validateBranchName(branch);
+  if (existsSync(path) && !isEmptyDirectory(path)) {
+    throw new Error(`worktree path already exists and is not empty: ${path}`);
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  runCommand("git", [
+    "-C",
+    canonicalRepo,
+    "worktree",
+    "add",
+    "-b",
+    branch,
+    path,
+  ]);
+}
+
+function validateBranchName(branch: string): void {
+  runCommand("git", ["check-ref-format", "--branch", branch]);
 }
 
 function checkoutBranch(path: string, branch: string): void {
@@ -233,4 +278,8 @@ function safeName(value: string): string {
       .at(-1)
       ?.replace(/[^a-zA-Z0-9._-]/g, "_") || "workspace"
   );
+}
+
+function defaultWorktreeBranch(path: string): string {
+  return `codexhub/${safeName(path)}-${Date.now()}`;
 }

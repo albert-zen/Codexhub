@@ -138,6 +138,48 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("creates worktree workspaces with repo path metadata", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({ workspace: { id: "work_1" } });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "workspace",
+      "create",
+      "--project",
+      "proj_1",
+      "--source",
+      "git",
+      "--mode",
+      "worktree",
+      "--repo-path",
+      "D:\\repo",
+      "--path",
+      "D:\\worktrees\\worker one",
+      "--branch",
+      "codexhub/worker-one",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/workspaces");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      project_id: "proj_1",
+      source_type: "git",
+      mode: "worktree",
+      repo_path: "D:\\repo",
+      path: "D:\\worktrees\\worker one",
+      branch: "codexhub/worker-one",
+    });
+  });
+
   it("creates run groups and associates sessions", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const output: string[] = [];

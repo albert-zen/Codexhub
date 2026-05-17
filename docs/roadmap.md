@@ -57,7 +57,8 @@ The following work remains open next:
 - Improve process cleanup behavior for stopped or failed real sessions.
 - Continue sharing API DTO/client contracts across CLI and web where it removes
   real duplication without creating a large client abstraction.
-- Add worktree-aware workspace creation for parallel worker sessions (`#13`).
+- Worktree-aware workspace creation now supports isolated branches and paths for
+  parallel worker sessions.
 - Web transcript pagination now exposes bounded item windows and previous/next
   navigation.
 - Task spec metadata can now be attached when a session starts; run groups can

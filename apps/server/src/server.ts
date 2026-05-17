@@ -190,7 +190,11 @@ function registerApiRoutes(
     const built = tryBuildWorkspace({
       project,
       source_type: parseWorkspaceSource(optionalString(body, "source_type")),
+      mode: parseWorkspaceMode(
+        optionalString(body, "mode") ?? optionalString(body, "workspace_mode"),
+      ),
       repo_url: optionalString(body, "repo_url"),
+      repo_path: optionalString(body, "repo_path"),
       path: optionalString(body, "path"),
       cwd: optionalString(body, "cwd"),
       branch: optionalString(body, "branch"),
@@ -581,6 +585,16 @@ function parseWorkspaceSource(value: string | null): "git" | "local" | null {
     400,
     "invalid_workspace_source",
     "source_type must be git or local",
+  );
+}
+
+function parseWorkspaceMode(value: string | null): "worktree" | null {
+  if (value === null || value === "standard") return null;
+  if (value === "worktree") return value;
+  throw new HttpError(
+    400,
+    "invalid_workspace_mode",
+    "mode must be standard or worktree",
   );
 }
 

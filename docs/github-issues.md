@@ -136,6 +136,7 @@ The next small issues created after the first hardening pass are:
    - Status: implemented; close after CI is green.
    - Conservative cleanup/delete semantics with path safety tests.
 3. `#13 feat(workspace): add git worktree workspace mode`
+   - Status: implemented; close after CI is green.
    - Isolated write scopes for parallel worker sessions.
 4. `#14 feat(web): paginate readable session transcript`
    - Status: implemented; close after CI is green.

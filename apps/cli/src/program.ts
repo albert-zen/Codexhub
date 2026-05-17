@@ -44,7 +44,9 @@ interface ProjectCreateOptions extends BaseCommandOptions {
 interface WorkspaceCreateOptions extends BaseCommandOptions {
   project: string;
   source: string;
+  mode?: string;
   repoUrl?: string;
+  repoPath?: string;
   path: string;
   cwd?: string;
   branch?: string;
@@ -258,7 +260,9 @@ export function createProgram(env: CliEnvironment = {}): Command {
   jsonOption(workspace.command("create").description("Create a workspace"))
     .requiredOption("--project <id>", "Project ID")
     .option("--source <local|git>", "Workspace source type", "local")
+    .option("--mode <standard|worktree>", "Workspace creation mode", "standard")
     .option("--repo-url <url>", "Repository URL")
+    .option("--repo-path <path>", "Local repository path for worktree mode")
     .requiredOption("--path <path>", "Workspace path")
     .option("--cwd <path>", "Worker cwd inside the workspace")
     .option("--branch <branch>", "Workspace branch")
@@ -268,7 +272,9 @@ export function createProgram(env: CliEnvironment = {}): Command {
         const body = omitUndefined<CreateWorkspaceRequest>({
           project_id: opts.project,
           source_type: parseWorkspaceSource(opts.source),
+          mode: parseWorkspaceMode(opts.mode),
           repo_url: opts.repoUrl,
+          repo_path: opts.repoPath,
           path: opts.path,
           cwd: opts.cwd,
           branch: opts.branch,
@@ -799,6 +805,14 @@ function parseInteger(value: string, min: number): number {
 function parseWorkspaceSource(value: string): "local" | "git" {
   if (value === "local" || value === "git") return value;
   throw new Error("--source must be local or git");
+}
+
+function parseWorkspaceMode(
+  value: string | undefined,
+): "standard" | "worktree" | undefined {
+  if (value === undefined || value === "standard") return undefined;
+  if (value === "worktree") return value;
+  throw new Error("--mode must be standard or worktree");
 }
 
 function parseMessageMode(value: string): MessageMode {

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +10,7 @@ let app: App;
 let tempDir: string;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "codexhub-server-"));
+  tempDir = await realpath(await mkdtemp(join(tmpdir(), "codexhub-server-")));
   app = await createServer({ dbPath: ":memory:", logger: false });
 });
 

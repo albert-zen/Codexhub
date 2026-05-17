@@ -254,6 +254,10 @@ Package-level gates:
   `pnpm --filter @codexhub/web build`, and browser verification for meaningful
   UI changes.
 
+On a clean checkout, build `@codexhub/core` before checking packages that import
+it, or run the root `pnpm check` / `pnpm test` scripts, which do this
+explicitly.
+
 Coding standards:
 
 - Prefer shared `packages/core` types for API-facing contracts.

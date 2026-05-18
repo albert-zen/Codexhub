@@ -122,6 +122,14 @@ For parallel work, prefer disjoint workspaces or Git worktrees and disjoint file
 ownership. Tell workers they are not alone in the codebase, must not revert
 others' changes, and must adapt to nearby edits.
 
+Use clone workspaces when each worker should have a self-contained `.git`
+directory and maximum metadata isolation. Use worktree workspaces when workers
+need fast branch-per-worker setup on one source checkout; Codexhub's default
+sandbox includes the source repo Git metadata root for linked worktrees so
+worker commits can update objects, refs, and worktree indexes. If a session uses
+a custom sandbox policy, include those metadata roots explicitly before asking a
+worktree worker to commit.
+
 ## Reading Results
 
 Prefer bounded reads:

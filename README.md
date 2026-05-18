@@ -81,6 +81,16 @@ For parallel work on one repository, create an isolated git worktree workspace:
 pnpm --silent --filter @codexhub/cli dev -- workspace create --project $Project.project.id --source git --mode worktree --repo-path D:\desktop\codex-hub --path D:\desktop\Codexhub-workspaces\worker-one --branch codexhub/worker-one --json
 ```
 
+Clone and worktree modes have different isolation tradeoffs. Clone mode keeps a
+full `.git` directory inside the worker workspace, so the default worker sandbox
+only needs the workspace path writable, at the cost of another checkout.
+Worktree mode is faster and uses isolated branches, but Git stores commit
+objects, refs, and indexes under the source repo's `.git` metadata. Codexhub's
+default worker sandbox adds that controlled Git metadata root for linked
+worktree workspaces so workers can commit on their branch. If you provide a
+custom `codex_options.sandboxPolicy`, include both the worktree path and the
+source repo Git metadata root when the worker must commit.
+
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
 

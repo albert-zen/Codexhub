@@ -117,6 +117,10 @@ building Codexhub with parallel workers.
   the sandbox writable roots. Agents should leave validated changes intact and
   report the exact commit command for the main integrator instead of fighting
   the sandbox. Tracked as `#30`.
+- Worktree-mode workers that need to commit require writable access to the
+  source repo Git metadata root in addition to the workspace path. Codexhub's
+  default runtime sandbox now grants that controlled metadata root for linked
+  worktrees; custom sandbox policies must preserve it explicitly.
 - When a commit closes a large batch of issues, create the next issue batch
   immediately while the dogfood findings are fresh. This keeps the manager's
   next planning session focused on current bottlenecks rather than stale seed

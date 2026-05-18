@@ -1,11 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { WorkerSessionStatus } from "@codexhub/core";
+import type { WorkerSessionStatus, Workspace } from "@codexhub/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/database.js";
 import { HubRepository } from "../src/repository.js";
+import { defaultWorkspaceSandboxPolicy } from "../src/runtime.js";
 import { createServer } from "../src/server.js";
 
 type App = Awaited<ReturnType<typeof createServer>>;
@@ -296,7 +304,7 @@ describe("Codexhub API", () => {
     expect(response.json().error.code).toBe("workspace_build_failed");
   });
 
-  it("creates git worktree workspaces with isolated branches", async () => {
+  it("creates git worktree workspaces with isolated branches and writable commit metadata", async () => {
     const project = await post("/api/v1/projects", {
       name: "worktree-demo",
       default_workspace_root: tempDir,
@@ -320,6 +328,35 @@ describe("Codexhub API", () => {
     expect(workspace.workspace.branch).toBe("codexhub/worktree-one");
     await expect(access(join(worktreePath, ".git"))).resolves.toBeUndefined();
 
+    const sandboxPolicy = defaultWorkspaceSandboxPolicy(workspace.workspace);
+    expect(sandboxPolicy.writableRoots).toEqual(
+      expect.arrayContaining([
+        await realpath(worktreePath),
+        await realpath(join(repoPath, ".git")),
+      ]),
+    );
+
+    await writeFile(
+      join(worktreePath, "worker.txt"),
+      "worker change\n",
+      "utf8",
+    );
+    runGit(["-C", worktreePath, "add", "worker.txt"]);
+    runGit([
+      "-C",
+      worktreePath,
+      "-c",
+      "user.name=Codexhub Test",
+      "-c",
+      "user.email=codexhub@example.test",
+      "commit",
+      "-m",
+      "worker commit",
+    ]);
+    expect(gitOutput(["-C", worktreePath, "log", "-1", "--pretty=%s"])).toBe(
+      "worker commit",
+    );
+
     const duplicate = await app.inject({
       method: "POST",
       url: "/api/v1/workspaces",
@@ -334,6 +371,75 @@ describe("Codexhub API", () => {
     });
     expect(duplicate.statusCode).toBe(400);
     expect(duplicate.json().error.code).toBe("workspace_build_failed");
+  });
+
+  it("does not grant source git metadata writes for non-worktree .git indirection", async () => {
+    const repoPath = join(tempDir, "source repo");
+    await initGitRepo(repoPath);
+    const workspacePath = join(tempDir, "not a worktree");
+    await mkdir(workspacePath);
+    await writeFile(
+      join(workspacePath, ".git"),
+      `gitdir: ${join(repoPath, ".git")}\n`,
+      "utf8",
+    );
+
+    const sandboxPolicy = defaultWorkspaceSandboxPolicy({
+      id: "work_fake",
+      project_id: "proj_fake",
+      source_type: "git",
+      repo_url: repoPath,
+      path: workspacePath,
+      cwd: workspacePath,
+      branch: null,
+      commit_sha: null,
+      status: "ready",
+      last_error: null,
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+    } satisfies Workspace);
+
+    expect(sandboxPolicy.writableRoots).toEqual([
+      await realpath(workspacePath),
+    ]);
+  });
+
+  it("does not grant source git metadata writes when gitdir is outside commondir", async () => {
+    const repoPath = join(tempDir, "source repo");
+    await initGitRepo(repoPath);
+    const workspacePath = join(tempDir, "crafted workspace");
+    const outsideGitDir = join(tempDir, "outside git metadata");
+    await mkdir(workspacePath);
+    await mkdir(outsideGitDir);
+    await writeFile(
+      join(workspacePath, ".git"),
+      `gitdir: ${outsideGitDir}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(outsideGitDir, "commondir"),
+      `${join(repoPath, ".git")}\n`,
+      "utf8",
+    );
+
+    const sandboxPolicy = defaultWorkspaceSandboxPolicy({
+      id: "work_fake",
+      project_id: "proj_fake",
+      source_type: "git",
+      repo_url: repoPath,
+      path: workspacePath,
+      cwd: workspacePath,
+      branch: null,
+      commit_sha: null,
+      status: "ready",
+      last_error: null,
+      created_at: new Date(0).toISOString(),
+      updated_at: new Date(0).toISOString(),
+    } satisfies Workspace);
+
+    expect(sandboxPolicy.writableRoots).toEqual([
+      await realpath(workspacePath),
+    ]);
   });
 
   it("archives or deletes workspaces only when no active sessions remain", async () => {
@@ -541,6 +647,10 @@ async function initGitRepo(path: string): Promise<void> {
 }
 
 function runGit(args: string[]): void {
+  gitOutput(args);
+}
+
+function gitOutput(args: string[]): string {
   const result = spawnSync("git", args, {
     encoding: "utf8",
     windowsHide: true,
@@ -550,4 +660,5 @@ function runGit(args: string[]): void {
       `git ${args.join(" ")} failed: ${result.stderr || result.stdout}`,
     );
   }
+  return result.stdout.trim();
 }

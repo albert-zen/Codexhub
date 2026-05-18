@@ -3,8 +3,8 @@ import {
   spawnSync,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Message, WorkerSession, Workspace } from "@codexhub/core";
 import {
   canSendMessage,
@@ -271,14 +271,9 @@ export class CodexRuntime {
         cwd: workspace.cwd,
         title: "Codexhub Worker",
         approvalPolicy: codexOptions.approvalPolicy ?? "never",
-        sandboxPolicy: codexOptions.sandboxPolicy ?? {
-          type: "workspaceWrite",
-          writableRoots: [workspace.path],
-          readOnlyAccess: { type: "fullAccess" },
-          networkAccess: false,
-          excludeTmpdirEnvVar: false,
-          excludeSlashTmp: false,
-        },
+        sandboxPolicy:
+          codexOptions.sandboxPolicy ??
+          defaultWorkspaceSandboxPolicy(workspace),
       },
       codexOptions.responseTimeoutMs,
     );
@@ -488,6 +483,160 @@ export class CodexRuntime {
     this.failPending(managed, new Error("Codex app-server stopped"));
     managed.process.kill();
   }
+}
+
+export interface WorkspaceWriteSandboxPolicy {
+  type: "workspaceWrite";
+  writableRoots: string[];
+  readOnlyAccess: { type: "fullAccess" };
+  networkAccess: false;
+  excludeTmpdirEnvVar: false;
+  excludeSlashTmp: false;
+}
+
+interface GitMetadataDirs {
+  gitDir: string;
+  commonDir: string;
+}
+
+export function defaultWorkspaceSandboxPolicy(
+  workspace: Workspace,
+): WorkspaceWriteSandboxPolicy {
+  return {
+    type: "workspaceWrite",
+    writableRoots: workspaceWritableRoots(workspace),
+    readOnlyAccess: { type: "fullAccess" },
+    networkAccess: false,
+    excludeTmpdirEnvVar: false,
+    excludeSlashTmp: false,
+  };
+}
+
+function workspaceWritableRoots(workspace: Workspace): string[] {
+  return uniquePaths([
+    canonicalPath(workspace.path),
+    ...worktreeGitMetadataWritableRoots(workspace),
+  ]);
+}
+
+function worktreeGitMetadataWritableRoots(workspace: Workspace): string[] {
+  if (workspace.source_type !== "git" || !workspace.repo_url) return [];
+  const metadata = readLinkedWorktreeMetadata(workspace.path);
+  if (!metadata) return [];
+
+  const sourceCommonDir = readSourceCommonGitDir(workspace.repo_url);
+  if (!sourceCommonDir || !samePath(metadata.commonDir, sourceCommonDir)) {
+    return [];
+  }
+  if (!isSameOrInside(metadata.gitDir, metadata.commonDir)) return [];
+
+  return [metadata.gitDir, metadata.commonDir];
+}
+
+function readLinkedWorktreeMetadata(
+  workspacePath: string,
+): GitMetadataDirs | null {
+  const gitPath = join(workspacePath, ".git");
+  if (!isRegularFile(gitPath)) return null;
+  return readGitFileMetadata(gitPath);
+}
+
+function readSourceCommonGitDir(repoPath: string): string | null {
+  if (!existsSync(repoPath)) return null;
+  const gitPath = join(repoPath, ".git");
+  if (!existsSync(gitPath)) return null;
+
+  let stat;
+  try {
+    stat = statSync(gitPath);
+  } catch {
+    return null;
+  }
+
+  if (stat.isDirectory()) return canonicalPath(gitPath);
+  if (!stat.isFile()) return null;
+  return readGitFileMetadata(gitPath)?.commonDir ?? null;
+}
+
+function readGitFileMetadata(gitFilePath: string): GitMetadataDirs | null {
+  const gitDirValue = readGitFilePath(gitFilePath);
+  if (!gitDirValue) return null;
+
+  const gitDir = canonicalPath(
+    resolveGitPath(dirname(gitFilePath), gitDirValue),
+  );
+  if (!existsSync(gitDir)) return null;
+  const commonDir = readCommonGitDir(gitDir);
+  if (!commonDir || samePath(gitDir, commonDir)) return null;
+
+  return {
+    gitDir,
+    commonDir,
+  };
+}
+
+function readGitFilePath(gitFilePath: string): string | null {
+  const firstLine = readFileSync(gitFilePath, "utf8").split(/\r?\n/, 1)[0];
+  const match = firstLine?.match(/^gitdir:\s*(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+function readCommonGitDir(gitDir: string): string | null {
+  const commonDirPath = join(gitDir, "commondir");
+  if (!isRegularFile(commonDirPath)) return null;
+
+  const firstLine = readFileSync(commonDirPath, "utf8")
+    .split(/\r?\n/, 1)[0]
+    ?.trim();
+  if (!firstLine) return null;
+  return canonicalPath(resolveGitPath(gitDir, firstLine));
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolveGitPath(basePath: string, path: string): string {
+  return isAbsolute(path) ? path : resolve(basePath, path);
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+function samePath(left: string, right: string): boolean {
+  return pathKey(left) === pathKey(right);
+}
+
+function isSameOrInside(child: string, parent: string): boolean {
+  if (samePath(child, parent)) return true;
+  const rel = relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+function uniquePaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const path of paths) {
+    const key = pathKey(path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(path);
+  }
+  return unique;
+}
+
+function pathKey(path: string): string {
+  const canonical = canonicalPath(path);
+  return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
 function resolveCodexInvocation(options: CodexOptions): {

@@ -16,6 +16,7 @@ import {
   getSessionActionAvailability,
   type SessionAction,
 } from "./session-actions.js";
+import { conversationEntries } from "./transcript-view.js";
 import "./styles.css";
 
 type SendMessageMode = Exclude<MessageMode, "initial">;
@@ -419,6 +420,15 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function TranscriptMetadataDetails({ entry }: { entry: TranscriptEntry }) {
+  return (
+    <details className="payload-details">
+      <summary>Transcript metadata</summary>
+      <pre>{displayJson(transcriptMetadata(entry))}</pre>
+    </details>
+  );
+}
+
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<ID | null>(null);
@@ -466,10 +476,8 @@ function App() {
     [projects, selectedProjectId],
   );
 
-  const latestAgentMessage = selectedSession?.last_agent_message ?? null;
-
-  const visibleTranscriptEntries = useMemo(
-    () => transcriptEntries.filter((entry) => entry.kind !== "debug"),
+  const conversationTranscriptEntries = useMemo(
+    () => conversationEntries(transcriptEntries),
     [transcriptEntries],
   );
 
@@ -812,54 +820,277 @@ function App() {
 
           {selectedSession ? (
             <>
-              <div className="detail-grid">
-                <div>
-                  <span className="label">Workspace</span>
-                  <strong>{shortId(selectedSession.workspace_id)}</strong>
-                </div>
-                <div>
-                  <span className="label">Thread</span>
-                  <strong>{shortId(selectedSession.codex_thread_id)}</strong>
-                </div>
-                <div>
-                  <span className="label">PID</span>
-                  <strong>{selectedSession.process_pid ?? "-"}</strong>
-                </div>
-                <div>
-                  <span className="label">Items</span>
-                  <strong>{selectedSession.last_item_sequence}</strong>
-                </div>
+              <div className="session-context">
+                <section className="task-spec-strip" aria-label="Task spec">
+                  <div className="task-title">
+                    <span className="label">Task</span>
+                    <strong>
+                      {compactText(
+                        taskSpec?.title ?? taskSpec?.intent,
+                        "No task spec snapshot.",
+                      )}
+                    </strong>
+                  </div>
+                  <dl className="session-meta-list">
+                    <div>
+                      <dt>Ref</dt>
+                      <dd>{taskSpec?.ref ?? "snapshot"}</dd>
+                    </div>
+                    <div>
+                      <dt>Workspace</dt>
+                      <dd>{shortId(selectedSession.workspace_id)}</dd>
+                    </div>
+                    <div>
+                      <dt>Thread</dt>
+                      <dd>{shortId(selectedSession.codex_thread_id)}</dd>
+                    </div>
+                    <div>
+                      <dt>PID</dt>
+                      <dd>{selectedSession.process_pid ?? "-"}</dd>
+                    </div>
+                    <div>
+                      <dt>Items</dt>
+                      <dd>{selectedSession.last_item_sequence}</dd>
+                    </div>
+                    <div>
+                      <dt>Updated</dt>
+                      <dd>{formatDate(selectedSession.updated_at)}</dd>
+                    </div>
+                  </dl>
+                </section>
               </div>
 
               <section
-                className="latest-block"
-                aria-label="Latest agent message"
+                className="conversation-shell"
+                aria-label="Session conversation"
               >
-                <div className="section-heading">
-                  <h3>Latest Agent Message</h3>
-                  <span>
-                    {formatDate(selectedSession.last_agent_message_at)}
-                  </span>
+                <div className="section-heading conversation-heading">
+                  <div>
+                    <h3>Conversation</h3>
+                    <p>
+                      {transcriptWindowLabel(
+                        transcriptEntries,
+                        transcriptAfter,
+                      )}
+                      ; transcript page limit {TRANSCRIPT_PAGE_LIMIT}
+                    </p>
+                  </div>
+                  <div className="item-controls">
+                    <label className="toggle-label">
+                      <input
+                        type="checkbox"
+                        checked={showRawItems}
+                        onChange={(event) =>
+                          setShowRawItems(event.target.checked)
+                        }
+                      />
+                      Raw items
+                    </label>
+                    <button
+                      className="button button-secondary button-compact"
+                      type="button"
+                      onClick={() => void handlePreviousTranscript()}
+                      disabled={loadingDetail || transcriptHistory.length === 0}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="button button-secondary button-compact"
+                      type="button"
+                      onClick={() => void handleNextTranscript()}
+                      disabled={loadingDetail || transcriptNextCursor === null}
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
-                <p>{compactText(latestAgentMessage)}</p>
+
+                <div className="conversation-scroll" aria-busy={loadingDetail}>
+                  <div className="chat-stream">
+                    {conversationTranscriptEntries.map((entry) => {
+                      if (entry.kind === "message") {
+                        return (
+                          <article
+                            className="chat-row chat-row-user"
+                            key={entry.id}
+                          >
+                            <div className="chat-bubble chat-bubble-user">
+                              <div className="chat-meta">
+                                <strong>
+                                  {messageTitle(entry.message_mode)}
+                                </strong>
+                                <span>Entry #{entry.sequence}</span>
+                                <span className="message-status">
+                                  {entry.message_status ?? entry.role}
+                                </span>
+                                <time>{formatDate(entry.created_at)}</time>
+                              </div>
+                              <p>{compactText(entry.text, "Continue.")}</p>
+                              <TranscriptMetadataDetails entry={entry} />
+                            </div>
+                          </article>
+                        );
+                      }
+
+                      if (entry.kind === "agent_message") {
+                        return (
+                          <article
+                            className="chat-row chat-row-agent"
+                            key={entry.id}
+                          >
+                            <div className="chat-bubble chat-bubble-agent">
+                              <div className="chat-meta">
+                                <strong>Agent</strong>
+                                <span>Entry #{entry.sequence}</span>
+                                <span>
+                                  {sequenceRangeLabel(entry.item_sequences)}
+                                </span>
+                                <time>{formatDate(entry.created_at)}</time>
+                              </div>
+                              <p>{compactText(entry.text)}</p>
+                              <TranscriptMetadataDetails entry={entry} />
+                            </div>
+                          </article>
+                        );
+                      }
+
+                      return (
+                        <details
+                          className={`chat-tool ${transcriptClass(entry)}`}
+                          key={entry.id}
+                        >
+                          <summary className="tool-summary">
+                            <strong>{transcriptTitle(entry)}</strong>
+                            <span>Entry #{entry.sequence}</span>
+                            <span>{transcriptSummary(entry)}</span>
+                            <time>{formatDate(entry.created_at)}</time>
+                          </summary>
+                          <div className="tool-body">
+                            <div className="chat-meta">
+                              <strong>Tool</strong>
+                              <span>
+                                {sequenceRangeLabel(entry.item_sequences)}
+                              </span>
+                              <span>
+                                {entry.codex_method ??
+                                  entry.codex_item_type ??
+                                  entry.item_type ??
+                                  entry.role}
+                              </span>
+                              <time>{formatDate(entry.created_at)}</time>
+                            </div>
+                            <p>
+                              {compactText(entry.text, "No transcript text.")}
+                            </p>
+                            <TranscriptMetadataDetails entry={entry} />
+                          </div>
+                        </details>
+                      );
+                    })}
+                    {!loadingDetail &&
+                    conversationTranscriptEntries.length === 0 ? (
+                      <p className="empty">
+                        No complete conversation entries in this page.
+                      </p>
+                    ) : null}
+                  </div>
+
+                  {showRawItems ? (
+                    <div
+                      className="raw-item-panel"
+                      aria-label="Raw item inspection"
+                    >
+                      <div className="section-heading raw-item-heading">
+                        <div>
+                          <h3>Raw Item Inspection</h3>
+                          <p>
+                            Items {itemWindowLabel(items, itemAfter)}; page
+                            limit {ITEM_PAGE_LIMIT}
+                          </p>
+                        </div>
+                        <div className="item-controls">
+                          <label>
+                            Type
+                            <select
+                              value={itemType}
+                              onChange={(event) =>
+                                setItemType(
+                                  event.target.value as ItemType | "all",
+                                )
+                              }
+                            >
+                              {ITEM_TYPES.map((type) => (
+                                <option key={type} value={type}>
+                                  {type}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button
+                            className="button button-secondary button-compact"
+                            type="button"
+                            onClick={() => void handlePreviousItems()}
+                            disabled={loadingDetail || itemHistory.length === 0}
+                          >
+                            Previous
+                          </button>
+                          <button
+                            className="button button-secondary button-compact"
+                            type="button"
+                            onClick={() => void handleNextItems()}
+                            disabled={loadingDetail || itemNextCursor === null}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+
+                      <div
+                        className="item-list raw-item-list"
+                        aria-busy={loadingDetail}
+                      >
+                        {items.map((item) => (
+                          <article
+                            className={`transcript-row transcript-${item.type}`}
+                            key={item.id}
+                          >
+                            <div className="transcript-meta">
+                              <strong>{itemTitle(item)}</strong>
+                              <span>Item #{item.sequence}</span>
+                              <span>
+                                {item.codex_method ??
+                                  item.codex_item_type ??
+                                  item.type}
+                              </span>
+                              <time>{formatDate(item.created_at)}</time>
+                            </div>
+                            <p>{itemSummary(item)}</p>
+                            <details className="payload-details">
+                              <summary>Raw payload</summary>
+                              <pre>{displayJson(item.raw_payload)}</pre>
+                            </details>
+                          </article>
+                        ))}
+                        {!loadingDetail && items.length === 0 ? (
+                          <p className="empty">
+                            No raw items match this filter.
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </section>
 
-              {taskSpec ? (
-                <section className="latest-block" aria-label="Task spec">
-                  <div className="section-heading">
-                    <h3>Task Spec</h3>
-                    <span>{taskSpec.ref ?? "snapshot"}</span>
-                  </div>
-                  <p>{compactText(taskSpec.title ?? taskSpec.intent)}</p>
-                </section>
-              ) : null}
-
-              <section className="composer" aria-label="Send session message">
+              <section
+                className="composer composer-bottom"
+                aria-label="Send session message"
+              >
                 <textarea
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
                   placeholder="Write a steer or continue instruction..."
-                  rows={4}
+                  rows={3}
                 />
                 <div className="action-row">
                   <button
@@ -924,221 +1155,6 @@ function App() {
                       </div>
                     ))}
                   </dl>
-                ) : null}
-              </section>
-
-              <section className="items-block" aria-label="Session transcript">
-                <div className="section-heading">
-                  <div>
-                    <h3>Transcript</h3>
-                    <p>
-                      {transcriptWindowLabel(
-                        transcriptEntries,
-                        transcriptAfter,
-                      )}
-                      ; transcript page limit {TRANSCRIPT_PAGE_LIMIT}
-                    </p>
-                  </div>
-                  <div className="item-controls">
-                    <label className="toggle-label">
-                      <input
-                        type="checkbox"
-                        checked={showRawItems}
-                        onChange={(event) =>
-                          setShowRawItems(event.target.checked)
-                        }
-                      />
-                      Raw items
-                    </label>
-                    <button
-                      className="button button-secondary button-compact"
-                      type="button"
-                      onClick={() => void handlePreviousTranscript()}
-                      disabled={loadingDetail || transcriptHistory.length === 0}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      className="button button-secondary button-compact"
-                      type="button"
-                      onClick={() => void handleNextTranscript()}
-                      disabled={loadingDetail || transcriptNextCursor === null}
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-
-                <div className="item-list" aria-busy={loadingDetail}>
-                  {visibleTranscriptEntries.map((entry) => {
-                    if (entry.kind === "message") {
-                      return (
-                        <article
-                          className="transcript-row transcript-message"
-                          key={entry.id}
-                        >
-                          <div className="transcript-meta">
-                            <strong>{messageTitle(entry.message_mode)}</strong>
-                            <span>Entry #{entry.sequence}</span>
-                            <span className="message-status">
-                              {entry.message_status ?? entry.role}
-                            </span>
-                            <time>{formatDate(entry.created_at)}</time>
-                          </div>
-                          <p>{compactText(entry.text, "Continue.")}</p>
-                          <details className="payload-details">
-                            <summary>Transcript metadata</summary>
-                            <pre>{displayJson(transcriptMetadata(entry))}</pre>
-                          </details>
-                        </article>
-                      );
-                    }
-
-                    if (entry.kind === "agent_message") {
-                      return (
-                        <article
-                          className="transcript-row transcript-agent"
-                          key={entry.id}
-                        >
-                          <div className="transcript-meta">
-                            <strong>Agent</strong>
-                            <span>Entry #{entry.sequence}</span>
-                            <span>
-                              {sequenceRangeLabel(entry.item_sequences)}
-                            </span>
-                            <time>{formatDate(entry.created_at)}</time>
-                          </div>
-                          <p>{compactText(entry.text)}</p>
-                          <details className="payload-details">
-                            <summary>Transcript metadata</summary>
-                            <pre>{displayJson(transcriptMetadata(entry))}</pre>
-                          </details>
-                        </article>
-                      );
-                    }
-
-                    return (
-                      <details
-                        className={`transcript-row transcript-toggle ${transcriptClass(entry)}`}
-                        key={entry.id}
-                      >
-                        <summary className="transcript-summary">
-                          <strong>{transcriptTitle(entry)}</strong>
-                          <span>Entry #{entry.sequence}</span>
-                          <span>{transcriptSummary(entry)}</span>
-                          <time>{formatDate(entry.created_at)}</time>
-                        </summary>
-                        <div className="transcript-meta">
-                          <strong>
-                            {entry.kind === "tool" ? "Tool" : "Debug"}
-                          </strong>
-                          <span>
-                            {sequenceRangeLabel(entry.item_sequences)}
-                          </span>
-                          <span>
-                            {entry.codex_method ??
-                              entry.codex_item_type ??
-                              entry.item_type ??
-                              entry.role}
-                          </span>
-                          <time>{formatDate(entry.created_at)}</time>
-                        </div>
-                        <p>{compactText(entry.text, "No transcript text.")}</p>
-                        <details className="payload-details">
-                          <summary>Transcript metadata</summary>
-                          <pre>{displayJson(transcriptMetadata(entry))}</pre>
-                        </details>
-                      </details>
-                    );
-                  })}
-                  {!loadingDetail && visibleTranscriptEntries.length === 0 ? (
-                    <p className="empty">
-                      No transcript entries match this filter.
-                    </p>
-                  ) : null}
-                </div>
-
-                {showRawItems ? (
-                  <div
-                    className="raw-item-panel"
-                    aria-label="Raw item inspection"
-                  >
-                    <div className="section-heading raw-item-heading">
-                      <div>
-                        <h3>Raw Item Inspection</h3>
-                        <p>
-                          Items {itemWindowLabel(items, itemAfter)}; page limit{" "}
-                          {ITEM_PAGE_LIMIT}
-                        </p>
-                      </div>
-                      <div className="item-controls">
-                        <label>
-                          Type
-                          <select
-                            value={itemType}
-                            onChange={(event) =>
-                              setItemType(
-                                event.target.value as ItemType | "all",
-                              )
-                            }
-                          >
-                            {ITEM_TYPES.map((type) => (
-                              <option key={type} value={type}>
-                                {type}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <button
-                          className="button button-secondary button-compact"
-                          type="button"
-                          onClick={() => void handlePreviousItems()}
-                          disabled={loadingDetail || itemHistory.length === 0}
-                        >
-                          Previous
-                        </button>
-                        <button
-                          className="button button-secondary button-compact"
-                          type="button"
-                          onClick={() => void handleNextItems()}
-                          disabled={loadingDetail || itemNextCursor === null}
-                        >
-                          Next
-                        </button>
-                      </div>
-                    </div>
-
-                    <div
-                      className="item-list raw-item-list"
-                      aria-busy={loadingDetail}
-                    >
-                      {items.map((item) => (
-                        <article
-                          className={`transcript-row transcript-${item.type}`}
-                          key={item.id}
-                        >
-                          <div className="transcript-meta">
-                            <strong>{itemTitle(item)}</strong>
-                            <span>Item #{item.sequence}</span>
-                            <span>
-                              {item.codex_method ??
-                                item.codex_item_type ??
-                                item.type}
-                            </span>
-                            <time>{formatDate(item.created_at)}</time>
-                          </div>
-                          <p>{itemSummary(item)}</p>
-                          <details className="payload-details">
-                            <summary>Raw payload</summary>
-                            <pre>{displayJson(item.raw_payload)}</pre>
-                          </details>
-                        </article>
-                      ))}
-                      {!loadingDetail && items.length === 0 ? (
-                        <p className="empty">No raw items match this filter.</p>
-                      ) : null}
-                    </div>
-                  </div>
                 ) : null}
               </section>
             </>

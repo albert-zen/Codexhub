@@ -9,10 +9,11 @@
     "check": "pnpm --filter @codexhub/core build && pnpm -r check",
     "dev": "pnpm --filter @codexhub/server dev",
     "dev:web": "pnpm --filter @codexhub/web dev",
+    "format": "prettier --check .",
     "lint": "eslint . --max-warnings 0",
     "quality": "pnpm format && pnpm lint && pnpm check && pnpm test && pnpm build",
-    "test": "pnpm --filter @codexhub/core build && pnpm -r test",
-    "format": "prettier --check ."
+    "smoke:dogfood": "pnpm --filter @codexhub/server dogfood:smoke",
+    "test": "pnpm --filter @codexhub/core build && pnpm -r test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

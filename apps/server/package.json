@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "dogfood:smoke": "pnpm --filter @codexhub/core build && tsc -p tsconfig.json && node dist/dogfood-smoke.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run"

@@ -165,6 +165,12 @@ building Codexhub with parallel workers.
   build or test validation as passed from a spawn-blocked sandbox; rerun the
   same command from a checkout or deliberate sandbox policy that permits child
   processes.
+- Issue `#27` added the dogfood smoke script as a compiled-JS path instead of a
+  `tsx` runtime path after fake smoke validation hit the same Windows
+  `spawn EPERM` restriction through esbuild. Running the root smoke script with
+  `--silent` and `--json` now produces clean machine-readable JSON, and the
+  script's `friction` array reported no fake-mode control-plane issues in the
+  local run.
 
 ## Suggested Ownership Map
 

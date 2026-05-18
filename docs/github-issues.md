@@ -42,12 +42,13 @@ Closed implementation areas:
 - Review-gate status metadata as observability, not validation (`#18`).
 - Terminal-session follow-up through API and CLI without reviving stopped,
   completed, or failed Codex processes (`#23`).
+- CI-safe fake dogfood smoke script with explicit real Codex opt-in (`#27`).
 
-The important boundary after `#23`: Codexhub has first-pass metadata for task
-specs, worktrees, run groups, review status, and terminal-session follow-up. It
-does not yet have the full orchestration UX around web creation/follow-up flows,
-structured review findings, ownership conflict display, or run group
-dashboards.
+The important boundary after these closures: Codexhub has first-pass metadata
+for task specs, worktrees, run groups, review status, terminal-session
+follow-up, and fake-mode dogfood automation. It does not yet have the full
+orchestration UX around web creation/follow-up flows, ownership conflict
+display, or run group dashboards.
 
 ## Backlog Guardrails
 
@@ -62,9 +63,9 @@ dashboards.
 
 ## Next Backlog
 
-The next GitHub issue wave is `#19` through `#27`. GitHub remains the execution
-source of truth for issue state; this section keeps the local manager-agent
-reading path aligned with that tracker.
+The remaining GitHub issue wave is `#19` through `#26`. GitHub remains the
+execution source of truth for issue state; this section keeps the local
+manager-agent reading path aligned with that tracker.
 
 1. `#19 fix(transcript): add conversation-level transcript projection`
    - Add transcript entries distinct from raw items, with pagination by
@@ -96,10 +97,6 @@ reading path aligned with that tracker.
    - Show run group sessions, statuses, latest messages, review state, and
      blocked/failed attention indicators through bounded API/web reads.
    - Depends on `#25`.
-8. `#27 test(dogfood): add long-running Codexhub smoke script`
-   - Add a repeatable fake-mode dogfood smoke path, with real Codex mode manual
-     and opt-in.
-   - Depends on `#19` and the implemented `#23` follow-up path.
 
 ## Later Closed Follow-Ups
 

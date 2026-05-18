@@ -38,7 +38,8 @@ The repository currently contains:
   state helpers, plus shared API DTOs for the main HTTP contracts.
 - `apps/server` with Fastify routes, SQLite migrations/repository code,
   workspace creation, Codex app-server launch, raw item ingestion, message
-  dispatch, and a fake worker path for integration tests.
+  dispatch, a fake worker path for integration tests, and a CI-safe dogfood
+  smoke script.
 - `apps/cli` with project, workspace, session, item, latest/result/trace/watch,
   send, stop, and recent-session commands. Leaf commands support `--json`.
   Session commands accept canonical session ids, unique leading session id
@@ -73,8 +74,7 @@ The following work remains open next:
 - Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
 - Add a run group dashboard for worker progress, latest messages, review state,
   and attention indicators (`#26`).
-- Add a CI-safe fake dogfood smoke script, with real Codex runs manual and
-  opt-in (`#27`).
+- Continue tuning the dogfood smoke output as real runs reveal new friction.
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
 GitHub issue tracker is the execution source of truth.
@@ -363,14 +363,15 @@ Status: first-pass complete; keep current during dogfood.
 
 ### Phase 11: Automation And CI Integration
 
-Status: partially complete.
+Status: first-pass complete for the CI-safe dogfood smoke path.
 
 - Repository CI runs `pnpm quality`.
 - Add package-level CI jobs when the repo grows enough to benefit from faster
   feedback.
 - CLI/server smoke tests run against a temporary Codexhub server.
-- Add optional long-running dogfood jobs that create Codexhub sessions and
-  report discovered issues without mutating code.
+- Optional long-running dogfood jobs can create Codexhub sessions in fake mode
+  by default, report discovered friction, and require explicit opt-in for real
+  Codex runs.
 - Keep CI as an external validation surface; do not turn Codexhub itself into a
   validation gate for worker output.
 

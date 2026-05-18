@@ -188,6 +188,39 @@ explicitly documentation work.
 Run groups are lightweight observation containers for related sessions. They do
 not schedule workers or enforce quality gates.
 
+## Dogfood smoke
+
+Use the dogfood smoke script to exercise Codexhub as a worker control plane
+without spending Codex quota:
+
+```powershell
+pnpm --silent smoke:dogfood -- --json
+```
+
+Fake mode is the default. The script starts a temporary Codexhub API server,
+creates a project, run group, local workspaces, sessions, a continue turn, and a
+terminal-session follow-up through `/api/v1` routes. The JSON output includes
+canonical session ids, statuses, latest messages, bounded trace excerpts,
+follow-up links, query examples, and a `friction` array. Use `--keep-artifacts`
+when you want to inspect the temporary SQLite DB and workspaces after the run.
+
+To point the same fake-safe path at an existing server:
+
+```powershell
+pnpm --silent smoke:dogfood -- --api http://127.0.0.1:4317 --workspace-root D:\tmp\codexhub-dogfood --json
+```
+
+Real Codex mode is manual and explicit:
+
+```powershell
+pnpm --silent smoke:dogfood -- --real --timeout-ms 600000 --keep-artifacts --json
+```
+
+Real mode still creates dedicated smoke workspaces and uses read-only prompts
+that tell workers not to edit files. Do not run real mode in CI by default, and
+copy durable items from the output `friction` array into
+`docs/subagent-ops-log.md` instead of treating them as transient console noise.
+
 ## API routes
 
 `/api/v1` is the canonical HTTP API prefix. Root routes such as `/sessions`

@@ -405,6 +405,42 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toContain("[agent #1-#2]\nReady now.");
   });
 
+  it("accepts explicit recent trace pagination", async () => {
+    await expect(traceRequestUrls(["--recent"])).resolves.toEqual([
+      "http://api.test/sessions/sess_1/transcript?limit=20&recent=true",
+    ]);
+  });
+
+  it("passes non-recent trace pagination through explicitly", async () => {
+    await expect(traceRequestUrls(["--no-recent"])).resolves.toEqual([
+      "http://api.test/sessions/sess_1/transcript?limit=20&recent=false",
+    ]);
+  });
+
+  it("uses forward trace pagination for cursors and sequence boundaries", async () => {
+    await expect(traceRequestUrls(["--cursor", "2"])).resolves.toEqual([
+      "http://api.test/sessions/sess_1/transcript?limit=20&cursor=2",
+    ]);
+    await expect(traceRequestUrls(["--after-sequence", "2"])).resolves.toEqual([
+      "http://api.test/sessions/sess_1/transcript?limit=20&after_sequence=2",
+    ]);
+    await expect(traceRequestUrls(["--before-sequence", "8"])).resolves.toEqual(
+      ["http://api.test/sessions/sess_1/transcript?limit=20&before_sequence=8"],
+    );
+  });
+
+  it("documents trace pagination controls in help", () => {
+    const help = commandHelp("session", "trace");
+    expect(help).toContain("--recent");
+    expect(help).toContain("default without cursor or sequence filters");
+    expect(help).toContain("--no-recent");
+    expect(help).toContain("Read forward from the beginning");
+    expect(help).toContain("--cursor <cursor>");
+    expect(help).toContain("Page cursor from non-recent pagination");
+    expect(help).toContain("--after-sequence <n>");
+    expect(help).toContain("--before-sequence <n>");
+  });
+
   it("keeps trace JSON transcript fields at the top level", async () => {
     const output: string[] = [];
     const program = createProgram({
@@ -489,10 +525,12 @@ describe("codexhub commands", () => {
   });
 
   it("preserves raw filtered trace JSON shape", async () => {
+    const calls: string[] = [];
     const output: string[] = [];
     const program = createProgram({
       fetch: async (url) => {
         const text = String(url);
+        calls.push(text);
         if (text.endsWith("/sessions/sess_1/messages")) {
           return jsonResponse({ items: [{ id: "msg_1" }] });
         }
@@ -520,6 +558,19 @@ describe("codexhub commands", () => {
     expect(body.items.items).toEqual([{ id: "item_1", type: "toolcall" }]);
     expect(body.transcript).toBeUndefined();
     expect(body.trace).toBeUndefined();
+    expect(calls).toEqual([
+      "http://api.test/sessions/sess_1/messages",
+      "http://api.test/sessions/sess_1/items?type=toolcall&limit=20&recent=true",
+    ]);
+  });
+
+  it("passes non-recent filtered trace pagination to item reads", async () => {
+    await expect(
+      traceRequestUrls(["--type", "toolcall", "--no-recent"]),
+    ).resolves.toEqual([
+      "http://api.test/sessions/sess_1/messages",
+      "http://api.test/sessions/sess_1/items?type=toolcall&limit=20&recent=false",
+    ]);
   });
 
   it("lists recent sessions with a default limit", async () => {
@@ -575,6 +626,46 @@ describe("codexhub commands", () => {
     });
   });
 });
+
+async function traceRequestUrls(args: string[]): Promise<string[]> {
+  const calls: string[] = [];
+  const program = createProgram({
+    fetch: async (url) => {
+      calls.push(String(url));
+      return jsonResponse({
+        session_id: "sess_1",
+        items: [],
+        messages: [],
+        transcript: [],
+        next_cursor: null,
+        limit: 20,
+      });
+    },
+    stdout: () => undefined,
+  });
+
+  await program.parseAsync([
+    "node",
+    "codexhub",
+    "--api",
+    "http://api.test",
+    "session",
+    "trace",
+    "sess_1",
+    ...args,
+  ]);
+
+  return calls;
+}
+
+function commandHelp(groupName: string, commandName: string): string {
+  const group = createProgram().commands.find(
+    (command) => command.name() === groupName,
+  );
+  const command = group?.commands.find((entry) => entry.name() === commandName);
+  if (!command) throw new Error(`${groupName} ${commandName} command missing`);
+  return command.helpInformation();
+}
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {

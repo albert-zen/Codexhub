@@ -68,6 +68,12 @@ pnpm --filter @codexhub/cli dev -- session watch $Session.session.id --limit 20
 pnpm --silent --filter @codexhub/cli dev -- workspace cleanup $Workspace.workspace.id --json
 ```
 
+`session trace` reads the latest transcript window by default. Use `--recent`
+to make that default explicit, `--no-recent` to read forward from the beginning
+with cursor pagination, `--cursor <cursor>` to continue a non-recent page, and
+`--after-sequence` / `--before-sequence` to bound the read by sequence. Cursor
+and sequence filters disable the default recent window.
+
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.
 

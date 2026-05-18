@@ -407,18 +407,25 @@ export function createProgram(env: CliEnvironment = {}): Command {
       parsePositiveInt,
       20,
     )
-    .option("--cursor <cursor>", "Page cursor")
+    .option(
+      "--recent",
+      "Read the latest transcript window (default without cursor or sequence filters)",
+    )
+    .option("--cursor <cursor>", "Page cursor from non-recent pagination")
     .option(
       "--after-sequence <n>",
-      "Only items after this sequence",
+      "Only entries after this sequence; disables the default recent window",
       parseNonNegativeInt,
     )
     .option(
       "--before-sequence <n>",
-      "Only items before this sequence",
+      "Only entries before this sequence; disables the default recent window",
       parseNonNegativeInt,
     )
-    .option("--no-recent", "Read from the beginning unless a cursor is given")
+    .option(
+      "--no-recent",
+      "Read forward from the beginning and allow cursor pagination",
+    )
     .action((sessionId: string, opts: SessionTraceOptions) =>
       runAction(env, opts, async () => {
         const api = client(program, env);
@@ -432,12 +439,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
                 cursor: opts.cursor,
                 after_sequence: opts.afterSequence,
                 before_sequence: opts.beforeSequence,
-                recent:
-                  opts.afterSequence === undefined &&
-                  opts.beforeSequence === undefined &&
-                  opts.cursor === undefined
-                    ? opts.recent !== false
-                    : undefined,
+                recent: traceRecentQuery(opts),
               }),
             }),
           ]);
@@ -455,12 +457,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
               cursor: opts.cursor,
               after_sequence: opts.afterSequence,
               before_sequence: opts.beforeSequence,
-              recent:
-                opts.afterSequence === undefined &&
-                opts.beforeSequence === undefined &&
-                opts.cursor === undefined
-                  ? opts.recent !== false
-                  : undefined,
+              recent: traceRecentQuery(opts),
             }),
           },
         );
@@ -920,6 +917,18 @@ function parseOptionalSessionStatus(
 function usesFilteredItemTrace(opts: SessionTraceOptions): boolean {
   const type = parseOptionalItemType(opts.type);
   return type !== undefined && type !== "all";
+}
+
+function traceRecentQuery(opts: SessionTraceOptions): boolean | undefined {
+  if (
+    opts.afterSequence !== undefined ||
+    opts.beforeSequence !== undefined ||
+    opts.cursor !== undefined
+  ) {
+    return undefined;
+  }
+
+  return opts.recent !== false;
 }
 
 async function readContent(

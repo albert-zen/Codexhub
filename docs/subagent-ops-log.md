@@ -184,6 +184,15 @@ building Codexhub with parallel workers.
   when the code is valid. Workers should report the blocked command precisely
   and run narrower static checks or direct smoke scripts; the main integrator
   remains responsible for final `pnpm test` and root quality gates.
+- The external-supervisor slice of `#40` showed two practical review rules:
+  check `git status --short` for untracked source files before accepting a
+  worker handoff, and verify new default ports against the local dev topology.
+  The runtime supervisor now defaults to `4319` because API uses `4317` and web
+  dev commonly uses `4318`.
+- Runtime boundary reviews should include protocol-failure cases, not just happy
+  path reconnects. A reviewer caught that invalid `200` responses from a
+  supervisor could become API `200` error bodies; the fix maps supervisor
+  protocol parse failures to non-2xx upstream errors.
 
 ## Suggested Ownership Map
 

@@ -128,6 +128,41 @@ export interface Message {
   sent_at: string | null;
 }
 
+export type TranscriptEntryKind =
+  | "message"
+  | "agent_message"
+  | "tool"
+  | "debug";
+export type TranscriptEntryRole =
+  | "manager_agent"
+  | "human"
+  | "system"
+  | "agent"
+  | "tool"
+  | "debug";
+export type TranscriptEntrySource = "message" | "item";
+
+export interface TranscriptEntry {
+  id: ID;
+  session_id: ID;
+  sequence: number;
+  kind: TranscriptEntryKind;
+  role: TranscriptEntryRole;
+  source: TranscriptEntrySource;
+  source_id: ID;
+  created_at: string;
+  text: string | null;
+  message_mode: MessageMode | null;
+  message_status: MessageStatus | null;
+  sender_type: SenderType | null;
+  item_type: ItemType | null;
+  codex_method: string | null;
+  codex_item_id: string | null;
+  codex_item_type: string | null;
+  item_ids: ID[];
+  item_sequences: number[];
+}
+
 export interface ReviewGateStatus {
   session_id: ID;
   implementation_done: boolean;

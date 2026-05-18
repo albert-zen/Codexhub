@@ -102,6 +102,13 @@ describe("Codexhub API", () => {
     expect(agentItems.items).toHaveLength(1);
     expect(agentItems.type).toBe("agentmessage");
 
+    const transcript = await get(`/api/v1/sessions/${sessionId}/transcript`);
+    expect(transcript.session_id).toBe(sessionId);
+    expect(
+      transcript.transcript.map((entry: { kind: string }) => entry.kind),
+    ).toEqual(["message", "agent_message", "debug"]);
+    expect(transcript.transcript[1].text).toContain("Inspect this repo");
+
     const stateItems = await get(
       `/api/v1/sessions/${sessionId}/items?type=state`,
     );
@@ -168,6 +175,104 @@ describe("Codexhub API", () => {
     });
     expect(invalidReviewStatus.statusCode).toBe(400);
     expect(invalidReviewStatus.json().error.code).toBe("invalid_review_status");
+  });
+
+  it("returns complete transcript entries across raw item page boundaries", async () => {
+    const dbPath = join(tempDir, "transcript.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "transcript-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "transcript-workspace"),
+      cwd: join(tempDir, "transcript-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    const message = repo.createMessage({
+      session_id: session.id,
+      mode: "initial",
+      content: "Summarize the repo.",
+      sender_type: "manager_agent",
+    });
+    repo.markMessageSent(message.id, "req_1");
+
+    const expectedText = Array.from(
+      { length: 25 },
+      (_, index) => `part-${index + 1} `,
+    ).join("");
+    for (const textDelta of Array.from(
+      { length: 25 },
+      (_, index) => `part-${index + 1} `,
+    )) {
+      repo.appendItem(session.id, {
+        method: "item/agentMessage/delta",
+        params: {
+          itemId: "agent_1",
+          textDelta,
+        },
+      });
+    }
+    repo.appendItem(session.id, {
+      method: "item/tool/call",
+      params: {
+        item: {
+          id: "tool_1",
+          type: "mcpToolCall",
+          tool: "list_issues",
+        },
+      },
+    });
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const firstPage = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?limit=2`,
+      );
+      expect(firstPage.transcript).toHaveLength(2);
+      expect(firstPage.next_cursor).toBe("2");
+      expect(firstPage.transcript[0]).toMatchObject({
+        kind: "message",
+        text: "Summarize the repo.",
+      });
+      expect(firstPage.transcript[1]).toMatchObject({
+        kind: "agent_message",
+        text: expectedText,
+        item_sequences: Array.from({ length: 25 }, (_, index) => index + 1),
+      });
+
+      const secondPage = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?cursor=${firstPage.next_cursor}&limit=2`,
+      );
+      expect(
+        secondPage.transcript.map((entry: { kind: string }) => entry.kind),
+      ).toEqual(["tool"]);
+
+      const latest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?limit=2&recent=true`,
+      );
+      expect(
+        latest.transcript.map((entry: { kind: string }) => entry.kind),
+      ).toEqual(["agent_message", "tool"]);
+      expect(latest.next_cursor).toBeNull();
+
+      const rawItems = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items?type=all&limit=20`,
+      );
+      expect(rawItems.items).toHaveLength(20);
+      expect(rawItems.next_cursor).toBe("20");
+      expect(rawItems.items[0].raw_payload.params.textDelta).toBe("part-1 ");
+    } finally {
+      await seeded.close();
+    }
   });
 
   it("rejects cwd paths outside the workspace", async () => {

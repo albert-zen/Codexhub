@@ -9,6 +9,7 @@ import type {
   RunGroup,
   SenderType,
   TaskSpecMetadata,
+  TranscriptEntry,
   WorkerSession,
   Workspace,
   WorkerSessionStatus,
@@ -111,6 +112,17 @@ export interface ItemListQuery {
   recent?: boolean | undefined;
 }
 
+export interface TranscriptListQuery {
+  session_id?: string | undefined;
+  limit?: number | undefined;
+  cursor?: string | null | undefined;
+  after?: number | null | undefined;
+  after_sequence?: number | null | undefined;
+  before?: number | null | undefined;
+  before_sequence?: number | null | undefined;
+  recent?: boolean | undefined;
+}
+
 export interface SessionListResponse extends Page<WorkerSession> {
   sessions: WorkerSession[];
 }
@@ -148,6 +160,11 @@ export interface SessionResponse {
 export interface ItemListResponse extends Page<Item> {
   session_id: string;
   type: string;
+}
+
+export interface TranscriptListResponse extends Page<TranscriptEntry> {
+  session_id: string;
+  transcript: TranscriptEntry[];
 }
 
 export interface LatestItemResponse {

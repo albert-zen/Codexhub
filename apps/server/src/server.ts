@@ -4,6 +4,7 @@ import type {
   ItemType,
   MessageMode,
   SenderType,
+  TranscriptPageOptions,
   WorkerSession,
 } from "@codexhub/core";
 import { isTerminalStatus } from "@codexhub/core";
@@ -433,11 +434,25 @@ function registerApiRoutes(
     return itemPageResponse(state, session.id, query);
   });
 
+  app.get(path("/sessions/:id/transcript"), async (request) => {
+    const params = asRecord(request.params);
+    const query = asRecord(request.query);
+    const session = requireSession(state.repo, requiredString(params, "id"));
+    return transcriptPageResponse(state, session.id, query);
+  });
+
   app.get(path("/items"), async (request) => {
     const query = asRecord(request.query);
     const sessionId = requiredString(query, "session_id");
     requireSession(state.repo, sessionId);
     return itemPageResponse(state, sessionId, query);
+  });
+
+  app.get(path("/transcript"), async (request) => {
+    const query = asRecord(request.query);
+    const sessionId = requiredString(query, "session_id");
+    requireSession(state.repo, sessionId);
+    return transcriptPageResponse(state, sessionId, query);
   });
 
   app.get(path("/sessions/:id/items/latest"), async (request) =>
@@ -469,6 +484,28 @@ function itemPageResponse(
   if (recent !== undefined) itemOptions.recent = recent;
   const page = state.repo.listItems(sessionId, itemOptions);
   return { ...page, session_id: sessionId, type };
+}
+
+function transcriptPageResponse(
+  state: ServerState,
+  sessionId: string,
+  query: Record<string, unknown>,
+) {
+  const after =
+    optionalNumber(query, "after") ??
+    optionalNumber(query, "after_sequence") ??
+    optionalNumber(query, "cursor");
+  const before =
+    optionalNumber(query, "before") ?? optionalNumber(query, "before_sequence");
+  const transcriptOptions: TranscriptPageOptions = {};
+  const recent = optionalBoolean(query, "recent");
+  const limit = optionalNumber(query, "limit");
+  if (limit !== undefined) transcriptOptions.limit = limit;
+  if (after !== undefined) transcriptOptions.after = after;
+  if (before !== undefined) transcriptOptions.before = before;
+  if (recent !== undefined) transcriptOptions.recent = recent;
+  const page = state.repo.listTranscript(sessionId, transcriptOptions);
+  return { ...page, session_id: sessionId, transcript: page.items };
 }
 
 function latestResponse(

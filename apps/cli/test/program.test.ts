@@ -334,44 +334,50 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toContain("note: Ready for review.");
   });
 
-  it("prints readable recent traces with bounded item windows", async () => {
+  it("prints readable recent traces with bounded transcript windows", async () => {
     const calls: string[] = [];
     const output: string[] = [];
     const program = createProgram({
       fetch: async (url) => {
         const text = String(url);
         calls.push(text);
-        if (text.endsWith("/sessions/sess_1/messages")) {
-          return jsonResponse({
-            items: [
-              {
-                id: "msg_1",
-                mode: "initial",
-                sender_type: "manager_agent",
-                content: "Inspect the repo.",
-                created_at: "2026-01-01T00:00:00.000Z",
-              },
-            ],
-          });
-        }
         return jsonResponse({
+          session_id: "sess_1",
           items: [
             {
-              id: "item_1",
               sequence: 1,
-              type: "agentmessage",
-              codex_item_id: "agent_1",
-              codex_method: "item/agentMessage/delta",
-              text_excerpt: "Ready",
+              kind: "message",
+              source_id: "msg_1",
+              message_mode: "initial",
+              sender_type: "manager_agent",
+              text: "Inspect the repo.",
               created_at: "2026-01-01T00:00:01.000Z",
             },
             {
-              id: "item_2",
               sequence: 2,
-              type: "agentmessage",
+              kind: "agent_message",
               codex_item_id: "agent_1",
-              codex_method: "item/agentMessage/delta",
-              text_excerpt: " now.",
+              item_sequences: [1, 2],
+              text: "Ready now.",
+              created_at: "2026-01-01T00:00:02.000Z",
+            },
+          ],
+          transcript: [
+            {
+              sequence: 1,
+              kind: "message",
+              source_id: "msg_1",
+              message_mode: "initial",
+              sender_type: "manager_agent",
+              text: "Inspect the repo.",
+              created_at: "2026-01-01T00:00:01.000Z",
+            },
+            {
+              sequence: 2,
+              kind: "agent_message",
+              codex_item_id: "agent_1",
+              item_sequences: [1, 2],
+              text: "Ready now.",
               created_at: "2026-01-01T00:00:02.000Z",
             },
           ],
@@ -391,13 +397,129 @@ describe("codexhub commands", () => {
     ]);
 
     expect(calls).toEqual([
-      "http://api.test/sessions/sess_1/messages",
-      "http://api.test/sessions/sess_1/items?type=all&limit=20&recent=true",
+      "http://api.test/sessions/sess_1/transcript?limit=20&recent=true",
     ]);
     expect(output.join("").trim()).toContain(
       "[input initial manager_agent msg_1]\nInspect the repo.",
     );
     expect(output.join("").trim()).toContain("[agent #1-#2]\nReady now.");
+  });
+
+  it("keeps trace JSON transcript fields at the top level", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          items: [],
+          transcript: [
+            {
+              sequence: 1,
+              kind: "agent_message",
+              text: "Ready now.",
+              item_sequences: [1, 2],
+            },
+          ],
+          next_cursor: null,
+          limit: 20,
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "trace",
+      "sess_1",
+      "--json",
+    ]);
+
+    const body = JSON.parse(output.join(""));
+    expect(body.session_id).toBe("sess_1");
+    expect(body.transcript).toHaveLength(1);
+    expect(body.trace).toBeUndefined();
+  });
+
+  it("keeps watch JSON transcript fields at the top level", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        const text = String(url);
+        if (text.endsWith("/sessions/sess_1")) {
+          return jsonResponse({
+            session: { id: "sess_1", status: "awaiting_input" },
+          });
+        }
+        return jsonResponse({
+          session_id: "sess_1",
+          transcript: [
+            {
+              sequence: 1,
+              kind: "agent_message",
+              text: "Ready now.",
+              item_sequences: [1, 2],
+            },
+          ],
+          next_cursor: null,
+          limit: 20,
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "watch",
+      "sess_1",
+      "--json",
+    ]);
+
+    const body = JSON.parse(output.join(""));
+    expect(body.session_id).toBe("sess_1");
+    expect(body.session).toMatchObject({ id: "sess_1" });
+    expect(body.transcript).toHaveLength(1);
+    expect(body.trace).toBeUndefined();
+  });
+
+  it("preserves raw filtered trace JSON shape", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        const text = String(url);
+        if (text.endsWith("/sessions/sess_1/messages")) {
+          return jsonResponse({ items: [{ id: "msg_1" }] });
+        }
+        return jsonResponse({ items: [{ id: "item_1", type: "toolcall" }] });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "trace",
+      "sess_1",
+      "--type",
+      "toolcall",
+      "--json",
+    ]);
+
+    const body = JSON.parse(output.join(""));
+    expect(body.session_id).toBe("sess_1");
+    expect(body.messages.items).toEqual([{ id: "msg_1" }]);
+    expect(body.items.items).toEqual([{ id: "item_1", type: "toolcall" }]);
+    expect(body.transcript).toBeUndefined();
+    expect(body.trace).toBeUndefined();
   });
 
   it("lists recent sessions with a default limit", async () => {

@@ -12,6 +12,7 @@ import type {
   SenderType,
   SessionListQuery,
   StartSessionRequest,
+  TranscriptListQuery,
   UpdateReviewGateStatusRequest,
   WorkerSessionStatus,
 } from "@codexhub/core";
@@ -400,7 +401,12 @@ export function createProgram(env: CliEnvironment = {}): Command {
   jsonOption(session.command("trace").description("Print a readable trace"))
     .argument("<session-id>", "Session ID")
     .option("--type <type>", "Item type filter", "all")
-    .option("--limit <n>", "Maximum number of items", parsePositiveInt, 20)
+    .option(
+      "--limit <n>",
+      "Maximum number of transcript entries",
+      parsePositiveInt,
+      20,
+    )
     .option("--cursor <cursor>", "Page cursor")
     .option(
       "--after-sequence <n>",
@@ -416,11 +422,35 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .action((sessionId: string, opts: SessionTraceOptions) =>
       runAction(env, opts, async () => {
         const api = client(program, env);
-        const [messages, items] = await Promise.all([
-          api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
-          api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
-            query: omitQuery<ItemListQuery>({
-              type: parseOptionalItemType(opts.type),
+        if (usesFilteredItemTrace(opts)) {
+          const [messages, items] = await Promise.all([
+            api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+            api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
+              query: omitQuery<ItemListQuery>({
+                type: parseOptionalItemType(opts.type),
+                limit: opts.limit,
+                cursor: opts.cursor,
+                after_sequence: opts.afterSequence,
+                before_sequence: opts.beforeSequence,
+                recent:
+                  opts.afterSequence === undefined &&
+                  opts.beforeSequence === undefined &&
+                  opts.cursor === undefined
+                    ? opts.recent !== false
+                    : undefined,
+              }),
+            }),
+          ]);
+          const result = { session_id: sessionId, messages, items };
+          printResult(env, opts, result, () => formatTrace(messages, items));
+          return;
+        }
+
+        parseOptionalItemType(opts.type);
+        const result = await api.get(
+          `/sessions/${encodeURIComponent(sessionId)}/transcript`,
+          {
+            query: omitQuery<TranscriptListQuery>({
               limit: opts.limit,
               cursor: opts.cursor,
               after_sequence: opts.afterSequence,
@@ -432,10 +462,12 @@ export function createProgram(env: CliEnvironment = {}): Command {
                   ? opts.recent !== false
                   : undefined,
             }),
-          }),
-        ]);
-        const result = { session_id: sessionId, messages, items };
-        printResult(env, opts, result, () => formatTrace(messages, items));
+          },
+        );
+        const traceResult = transcriptResult(sessionId, result);
+        printResult(env, opts, traceResult, () =>
+          formatTranscript(traceResult),
+        );
       }),
     );
 
@@ -446,7 +478,12 @@ export function createProgram(env: CliEnvironment = {}): Command {
   )
     .argument("<session-id>", "Session ID")
     .option("--type <type>", "Item type filter", "all")
-    .option("--limit <n>", "Maximum number of items", parsePositiveInt, 20)
+    .option(
+      "--limit <n>",
+      "Maximum number of transcript entries",
+      parsePositiveInt,
+      20,
+    )
     .option(
       "--after-sequence <n>",
       "Only items after this sequence",
@@ -455,31 +492,49 @@ export function createProgram(env: CliEnvironment = {}): Command {
     .action((sessionId: string, opts: SessionTraceOptions) =>
       runAction(env, opts, async () => {
         const api = client(program, env);
-        const [sessionDetail, messages, items] = await Promise.all([
+        const [sessionDetail, trace] = await Promise.all([
           api.get(`/sessions/${encodeURIComponent(sessionId)}`),
-          api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
-          api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
-            query: omitQuery<ItemListQuery>({
-              type: parseOptionalItemType(opts.type),
-              limit: opts.limit,
-              after_sequence: opts.afterSequence,
-              recent: opts.afterSequence === undefined,
-            }),
-          }),
+          usesFilteredItemTrace(opts)
+            ? Promise.all([
+                api.get(`/sessions/${encodeURIComponent(sessionId)}/messages`),
+                api.get(`/sessions/${encodeURIComponent(sessionId)}/items`, {
+                  query: omitQuery<ItemListQuery>({
+                    type: parseOptionalItemType(opts.type),
+                    limit: opts.limit,
+                    after_sequence: opts.afterSequence,
+                    recent: opts.afterSequence === undefined,
+                  }),
+                }),
+              ]).then(([messages, items]) => ({
+                session_id: sessionId,
+                messages,
+                items,
+              }))
+            : api.get(`/sessions/${encodeURIComponent(sessionId)}/transcript`, {
+                query: omitQuery<TranscriptListQuery>({
+                  limit: opts.limit,
+                  after_sequence: opts.afterSequence,
+                  recent: opts.afterSequence === undefined,
+                }),
+              }),
         ]);
-        const result = {
-          session_id: sessionId,
-          session: unwrapRecord(sessionDetail, "session"),
-          messages,
-          items,
-        };
+        const sessionRecord = unwrapRecord(sessionDetail, "session");
+        const traceRecord = asRecord(trace);
+        const result = usesFilteredItemTrace(opts)
+          ? {
+              session_id: sessionId,
+              session: sessionRecord,
+              messages: traceRecord?.messages,
+              items: traceRecord?.items,
+            }
+          : transcriptResult(sessionId, trace, sessionRecord);
         printResult(env, opts, result, () => {
-          const sessionRecord = unwrapRecord(sessionDetail, "session");
-          return [
-            formatSessionInspect(sessionRecord),
-            "",
-            formatTrace(messages, items),
-          ].join("\n");
+          const traceText = usesFilteredItemTrace(opts)
+            ? formatTrace(result.messages, result.items)
+            : formatTranscript(result);
+          return [formatSessionInspect(sessionRecord), "", traceText].join(
+            "\n",
+          );
         });
       }),
     );
@@ -862,6 +917,11 @@ function parseOptionalSessionStatus(
   throw new Error("--status is not a supported session status");
 }
 
+function usesFilteredItemTrace(opts: SessionTraceOptions): boolean {
+  const type = parseOptionalItemType(opts.type);
+  return type !== undefined && type !== "all";
+}
+
 async function readContent(
   env: CliEnvironment,
   optionValues: Array<string | undefined>,
@@ -1028,6 +1088,21 @@ function formatItems(value: unknown): string {
     .join("\n");
 }
 
+function transcriptResult(
+  sessionId: string,
+  value: unknown,
+  session?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const record = asRecord(value) ?? {};
+  const result: Record<string, unknown> = {
+    ...record,
+    session_id: stringField(record, "session_id") ?? sessionId,
+    transcript: extractItems(record, "transcript"),
+  };
+  if (session !== undefined) result.session = session;
+  return result;
+}
+
 function formatTrace(messagesValue: unknown, itemsValue: unknown): string {
   const messages = extractItems(messagesValue, "messages").map((message) => ({
     kind: "message" as const,
@@ -1061,6 +1136,38 @@ function formatTrace(messagesValue: unknown, itemsValue: unknown): string {
       }
 
       return `[${entry.type} ${entry.sequenceLabel}] ${entry.summary}`;
+    })
+    .join("\n\n");
+}
+
+function formatTranscript(value: unknown): string {
+  const entries = extractItems(value, "transcript");
+  if (entries.length === 0) return "No trace entries.";
+
+  return entries
+    .map((entry) => {
+      const kind = stringField(entry, "kind");
+      if (kind === "message") {
+        const mode = stringField(entry, "message_mode") ?? "message";
+        const sender = stringField(entry, "sender_type") ?? "unknown";
+        const sourceId = stringField(entry, "source_id") ?? "";
+        return [
+          `[input ${mode} ${sender} ${shortToken(sourceId)}]`,
+          stringField(entry, "text") ?? "",
+        ].join("\n");
+      }
+
+      if (kind === "agent_message") {
+        return [
+          `[agent ${transcriptSequenceLabel(entry)}]`,
+          stringField(entry, "text") ?? "(empty agent message)",
+        ].join("\n");
+      }
+
+      const type = stringField(entry, "item_type") ?? kind ?? "debug";
+      return `[${type} ${transcriptSequenceLabel(entry)}] ${transcriptSummary(
+        entry,
+      )}`;
     })
     .join("\n\n");
 }
@@ -1156,6 +1263,16 @@ function itemSummary(item: Record<string, unknown>): string {
   );
 }
 
+function transcriptSummary(entry: Record<string, unknown>): string {
+  const text = stringField(entry, "text");
+  if (text) return oneLine(text, 180);
+  return (
+    stringField(entry, "codex_method") ??
+    stringField(entry, "codex_item_type") ??
+    "(no details)"
+  );
+}
+
 function formatSessions(value: unknown): string {
   const sessions = extractItems(value, "sessions");
   if (sessions.length === 0) return "No sessions.";
@@ -1190,7 +1307,10 @@ function extractItems(
       .filter((entry): entry is Record<string, unknown> => entry !== null);
 
   const record = asRecord(value);
-  const candidates = [record?.items, record?.[envelopeKey]];
+  const candidates =
+    envelopeKey === "items"
+      ? [record?.items]
+      : [record?.[envelopeKey], record?.items];
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) {
       return candidate
@@ -1234,6 +1354,16 @@ function numberField(
   return typeof value === "number" ? value : null;
 }
 
+function numberArrayField(
+  record: Record<string, unknown> | null,
+  key: string,
+): number[] {
+  const value = record?.[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is number => typeof entry === "number")
+    : [];
+}
+
 function oneLine(value: string, maxLength: number): string {
   const line = value.replace(/\s+/g, " ").trim();
   if (line.length <= maxLength) return line;
@@ -1249,4 +1379,12 @@ function sequenceRange(values: number[]): string {
   const first = Math.min(...values);
   const last = Math.max(...values);
   return first === last ? `#${first}` : `#${first}-#${last}`;
+}
+
+function transcriptSequenceLabel(entry: Record<string, unknown>): string {
+  const itemSequences = numberArrayField(entry, "item_sequences");
+  if (itemSequences.length > 0) return sequenceRange(itemSequences);
+
+  const sequence = numberField(entry, "sequence");
+  return sequence === null ? "#?" : `#${sequence}`;
 }

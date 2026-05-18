@@ -9,8 +9,11 @@ import {
   type RunGroup,
   type SenderType,
   type TaskSpecMetadata,
+  type TranscriptEntry,
+  type TranscriptPageOptions,
   type WorkerSession,
   type Workspace,
+  projectTranscriptEntries,
 } from "@codexhub/core";
 
 export interface CreateProjectInput {
@@ -757,6 +760,23 @@ export class HubRepository {
           )
           .get(sessionId, type);
     return row ? itemFromRow(row) : null;
+  }
+
+  listTranscript(
+    sessionId: string,
+    options: TranscriptPageOptions = {},
+  ): {
+    items: TranscriptEntry[];
+    next_cursor: string | null;
+    limit: number;
+  } {
+    this.requireSession(sessionId);
+    const messages = this.listMessages(sessionId);
+    const items = this.db
+      .prepare("SELECT * FROM items WHERE session_id = ? ORDER BY sequence ASC")
+      .all(sessionId)
+      .map(itemFromRow);
+    return projectTranscriptEntries(sessionId, messages, items, options);
   }
 
   private agentMessageText(item: {

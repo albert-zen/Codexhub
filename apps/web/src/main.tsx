@@ -475,6 +475,11 @@ function App() {
     return newestAgentEntry?.text ?? null;
   }, [selectedSession, transcriptEntries]);
 
+  const visibleTranscriptEntries = useMemo(
+    () => transcriptEntries.filter((entry) => entry.kind !== "debug"),
+    [transcriptEntries],
+  );
+
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
     setError(null);
@@ -974,7 +979,7 @@ function App() {
                 </div>
 
                 <div className="item-list" aria-busy={loadingDetail}>
-                  {transcriptEntries.map((entry) => {
+                  {visibleTranscriptEntries.map((entry) => {
                     if (entry.kind === "message") {
                       return (
                         <article
@@ -1051,7 +1056,7 @@ function App() {
                       </details>
                     );
                   })}
-                  {!loadingDetail && transcriptEntries.length === 0 ? (
+                  {!loadingDetail && visibleTranscriptEntries.length === 0 ? (
                     <p className="empty">
                       No transcript entries match this filter.
                     </p>

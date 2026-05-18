@@ -51,7 +51,7 @@ export async function createServer(options: CreateServerOptions = {}) {
     const err = error instanceof Error ? error : new Error(String(error));
     if (err instanceof HttpError) {
       return reply.status(err.statusCode).send({
-        error: { code: err.code, message: err.message },
+        error: { code: err.code, message: err.message, ...err.details },
         message: err.message,
       });
     }
@@ -581,6 +581,9 @@ function requireSession(repo: HubRepository, reference: string): WorkerSession {
       409,
       "session_id_ambiguous",
       `session id prefix "${result.reference}" is ambiguous; pass a longer prefix or canonical session id`,
+      {
+        candidate_ids: result.matches.map((session) => session.id),
+      },
     );
   }
   if (result.status === "not_found")
@@ -602,6 +605,7 @@ class HttpError extends Error {
     readonly statusCode: number,
     readonly code: string,
     message: string,
+    readonly details: Record<string, unknown> = {},
   ) {
     super(message);
   }

@@ -74,11 +74,13 @@ with cursor pagination, `--cursor <cursor>` to continue a non-recent page, and
 `--after-sequence` / `--before-sequence` to bound the read by sequence. Cursor
 and sequence filters disable the default recent window.
 
-Session commands accept the canonical `sess_...` id or a unique leading prefix
-of that id. Responses always keep canonical ids unchanged. Ambiguous prefixes
-fail with `session_id_ambiguous`; side-effect commands such as `session send`,
-`session stop`, `session review-status set`, and `run-group add-session` refuse
-the request before changing state.
+Session commands accept the canonical `sess_<uuid>` id, a unique leading prefix
+including `sess_`, or a unique leading prefix from only the UUID portion.
+Responses always keep canonical ids unchanged. Ambiguous prefixes fail with
+`session_id_ambiguous` and include `candidate_ids` in JSON error payloads.
+Side-effect commands such as `session send`, `session stop`,
+`session review-status set`, and `run-group add-session` refuse the request
+before changing state.
 
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.

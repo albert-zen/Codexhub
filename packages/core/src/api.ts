@@ -19,6 +19,7 @@ export interface ErrorResponse {
   error: {
     code: string;
     message: string;
+    candidate_ids?: string[] | undefined;
   };
 }
 

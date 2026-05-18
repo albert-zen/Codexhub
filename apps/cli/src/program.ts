@@ -135,7 +135,8 @@ interface ReviewStatusSetOptions extends BaseCommandOptions {
 }
 
 const DEFAULT_API = process.env.CODEXHUB_API ?? "http://127.0.0.1:4317";
-const SESSION_REF_DESCRIPTION = "Session ID or unique prefix";
+const SESSION_REF_DESCRIPTION =
+  "Session ID, unique id prefix, or unique UUID prefix";
 
 export function createProgram(env: CliEnvironment = {}): Command {
   const program = new Command();
@@ -780,9 +781,17 @@ function writeError(
 ): void {
   const message = error instanceof Error ? error.message : String(error);
   if (opts.json) {
+    const details =
+      error instanceof ApiError ? apiErrorDetails(error.responseBody) : {};
     const body =
       error instanceof ApiError
-        ? { error: message, status: error.status, response: error.responseBody }
+        ? omitUndefined({
+            error: details.message ?? message,
+            code: details.code,
+            status: error.status,
+            candidate_ids: details.candidate_ids,
+            response: error.responseBody,
+          })
         : { error: message };
     writeLine(env, JSON.stringify(body, null, 2), "stderr");
     return;
@@ -827,6 +836,35 @@ function omitQuery<T extends object>(
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   ) as Record<string, string | number | boolean | null | undefined>;
+}
+
+function apiErrorDetails(value: unknown): {
+  code?: string;
+  message?: string;
+  candidate_ids?: string[];
+} {
+  const record = asRecord(value);
+  const error = asRecord(record?.error);
+  if (!error) {
+    return typeof record?.error === "string" ? { message: record.error } : {};
+  }
+
+  const candidateIds = error.candidate_ids;
+  const details: {
+    code?: string;
+    message?: string;
+    candidate_ids?: string[];
+  } = {};
+  const code = stringField(error, "code");
+  const message = stringField(error, "message");
+  if (code) details.code = code;
+  if (message) details.message = message;
+  if (Array.isArray(candidateIds)) {
+    details.candidate_ids = candidateIds.filter(
+      (candidate): candidate is string => typeof candidate === "string",
+    );
+  }
+  return details;
 }
 
 function parseJsonOption(

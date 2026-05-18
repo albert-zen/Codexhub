@@ -112,6 +112,9 @@ export type SessionResolution =
       matches: WorkerSession[];
     };
 
+const SESSION_ID_PREFIX = "sess_";
+const SESSION_RESOLUTION_MATCH_LIMIT = 20;
+
 export class HubRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -428,14 +431,24 @@ export class HubRepository {
     const exact = this.getSession(sessionReference);
     if (exact) return { status: "found", session: exact };
 
+    const matchUuidPrefix = !sessionReference.startsWith(SESSION_ID_PREFIX);
     const matches = this.db
       .prepare(
         `SELECT * FROM worker_sessions
          WHERE substr(id, 1, ?) = ?
-         ORDER BY updated_at DESC, created_at DESC
-         LIMIT 2`,
+            OR (? = 1 AND substr(id, ?, ?) = ?)
+         ORDER BY id ASC
+         LIMIT ?`,
       )
-      .all(sessionReference.length, sessionReference)
+      .all(
+        sessionReference.length,
+        sessionReference,
+        matchUuidPrefix ? 1 : 0,
+        SESSION_ID_PREFIX.length + 1,
+        sessionReference.length,
+        sessionReference,
+        SESSION_RESOLUTION_MATCH_LIMIT,
+      )
       .map(sessionFromRow);
 
     if (matches.length === 0) {

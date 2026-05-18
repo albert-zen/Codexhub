@@ -196,9 +196,13 @@ describe("Codexhub API", () => {
     const started = await createFakeSession(project.project.id, "prefix-one");
     const sessionId = started.session.id;
     const shortPrefix = sessionId.slice(0, 12);
+    const uuidPrefix = sessionId.slice("sess_".length, "sess_".length + 12);
 
     const inspected = await get(`/api/v1/sessions/${shortPrefix}`);
     expect(inspected.session.id).toBe(sessionId);
+
+    const inspectedByUuidPrefix = await get(`/api/v1/sessions/${uuidPrefix}`);
+    expect(inspectedByUuidPrefix.session.id).toBe(sessionId);
 
     const latest = await get(`/api/v1/sessions/${shortPrefix}/latest`);
     expect(latest.session_id).toBe(sessionId);
@@ -217,6 +221,19 @@ describe("Codexhub API", () => {
     });
     expect(continued.session.id).toBe(sessionId);
     expect(continued.message.session_id).toBe(sessionId);
+  });
+
+  it("returns not found for missing uuid-only session prefixes", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/sessions/not-a-session",
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error).toEqual({
+      code: "session_not_found",
+      message: "session not found",
+    });
   });
 
   it("refuses ambiguous short session prefixes before side effects", async () => {
@@ -239,6 +256,9 @@ describe("Codexhub API", () => {
     });
     expect(send.statusCode).toBe(409);
     expect(send.json().error.code).toBe("session_id_ambiguous");
+    expect(send.json().error.candidate_ids).toEqual(
+      [first.session.id, second.session.id].sort(),
+    );
 
     const stop = await app.inject({
       method: "POST",
@@ -261,6 +281,73 @@ describe("Codexhub API", () => {
     expect(addSession.json().error.code).toBe("session_id_ambiguous");
 
     for (const sessionId of [first.session.id, second.session.id]) {
+      const inspected = await get(`/api/v1/sessions/${sessionId}`);
+      expect(inspected.session.status).toBe("awaiting_input");
+      const messages = await get(`/api/v1/sessions/${sessionId}/messages`);
+      expect(messages.messages).toHaveLength(1);
+    }
+    const members = await get(
+      `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+    );
+    expect(members.sessions).toHaveLength(0);
+  });
+
+  it("refuses ambiguous uuid-only session prefixes before side effects", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "ambiguous-uuid-prefix-demo",
+      default_workspace_root: tempDir,
+    });
+    const sessions = [];
+    for (let index = 0; index < 17; index += 1) {
+      sessions.push(
+        await createFakeSession(project.project.id, `uuid-prefix-${index}`),
+      );
+    }
+
+    const ambiguousUuidPrefix = duplicatedUuidPrefix(
+      sessions.map((session) => session.session.id),
+    );
+    const matchingSessionIds = sessions
+      .map((session) => session.session.id)
+      .filter((id) => id.slice("sess_".length).startsWith(ambiguousUuidPrefix))
+      .sort();
+
+    const send = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${ambiguousUuidPrefix}/messages`,
+      payload: {
+        mode: "continue",
+        content: "This must not be sent.",
+        sender_type: "manager_agent",
+      },
+    });
+    expect(send.statusCode).toBe(409);
+    expect(send.json().error).toMatchObject({
+      code: "session_id_ambiguous",
+      candidate_ids: matchingSessionIds,
+    });
+
+    const stop = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${ambiguousUuidPrefix}/stop`,
+      payload: {},
+    });
+    expect(stop.statusCode).toBe(409);
+    expect(stop.json().error.candidate_ids).toEqual(matchingSessionIds);
+
+    const runGroup = await post("/api/v1/run-groups", {
+      name: "ambiguous-uuid-prefix-run-group",
+      project_id: project.project.id,
+    });
+    const addSession = await app.inject({
+      method: "POST",
+      url: `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+      payload: { session_id: ambiguousUuidPrefix },
+    });
+    expect(addSession.statusCode).toBe(409);
+    expect(addSession.json().error.candidate_ids).toEqual(matchingSessionIds);
+
+    for (const sessionId of matchingSessionIds) {
       const inspected = await get(`/api/v1/sessions/${sessionId}`);
       expect(inspected.session.status).toBe("awaiting_input");
       const messages = await get(`/api/v1/sessions/${sessionId}/messages`);
@@ -1097,6 +1184,16 @@ async function createFakeSession(
     initial_message: `Inspect ${workspaceName} and report status.`,
     codex_options: { fake: true },
   });
+}
+
+function duplicatedUuidPrefix(sessionIds: string[]): string {
+  const counts = new Map<string, number>();
+  for (const sessionId of sessionIds) {
+    const prefix = sessionId.slice("sess_".length, "sess_".length + 1);
+    counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+    if ((counts.get(prefix) ?? 0) > 1) return prefix;
+  }
+  throw new Error("expected at least one duplicate uuid prefix");
 }
 
 async function getFrom(instance: App, url: string): Promise<any> {

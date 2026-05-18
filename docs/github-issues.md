@@ -105,8 +105,8 @@ reading path aligned with that tracker.
 ## Later Closed Follow-Ups
 
 - `#38 feat(session): accept unique short session prefixes`
-  - Session commands can use canonical `sess_...` ids or unique leading
-    prefixes.
+  - Session commands can use canonical `sess_<uuid>` ids, unique leading
+    prefixes including `sess_`, or unique prefixes from only the UUID portion.
   - API responses keep canonical ids unchanged.
-  - Ambiguous prefixes return `session_id_ambiguous`; side-effect commands
-    refuse them before changing state.
+  - Ambiguous prefixes return `session_id_ambiguous` with machine-readable
+    `candidate_ids`; side-effect commands refuse them before changing state.

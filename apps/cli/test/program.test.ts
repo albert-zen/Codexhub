@@ -519,15 +519,10 @@ describe("codexhub commands", () => {
   });
 
   it("documents unique short prefixes for session references", () => {
-    expect(commandHelp("session", "inspect")).toContain(
-      "Session ID or unique prefix",
-    );
-    expect(commandHelp("session", "send")).toContain(
-      "Session ID or unique prefix",
-    );
-    expect(commandHelp("run-group", "add-session")).toContain(
-      "Session ID or unique prefix",
-    );
+    const helpText = "Session ID, unique id prefix, or unique UUID prefix";
+    expect(commandHelp("session", "inspect")).toContain(helpText);
+    expect(commandHelp("session", "send")).toContain(helpText);
+    expect(commandHelp("run-group", "add-session")).toContain(helpText);
   });
 
   it("keeps trace JSON transcript fields at the top level", async () => {
@@ -744,6 +739,51 @@ describe("codexhub commands", () => {
     expect(JSON.parse(errors.join(""))).toMatchObject({
       error: "not found",
       status: 404,
+    });
+  });
+
+  it("prints machine-readable candidate ids for ambiguous JSON API errors", async () => {
+    let exitCode = 0;
+    const errors: string[] = [];
+    const env: CliEnvironment = {
+      fetch: async () =>
+        jsonResponse(
+          {
+            error: {
+              code: "session_id_ambiguous",
+              message:
+                'session id prefix "a" is ambiguous; pass a longer prefix or canonical session id',
+              candidate_ids: ["sess_a1", "sess_a2"],
+            },
+            message:
+              'session id prefix "a" is ambiguous; pass a longer prefix or canonical session id',
+          },
+          { status: 409 },
+        ),
+      stderr: (text) => errors.push(text),
+      setExitCode: (code) => {
+        exitCode = code;
+      },
+    };
+
+    await createProgram(env).parseAsync([
+      "node",
+      "codexhub",
+      "session",
+      "send",
+      "a",
+      "--message",
+      "Please continue.",
+      "--json",
+    ]);
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(errors.join(""))).toMatchObject({
+      error:
+        'session id prefix "a" is ambiguous; pass a longer prefix or canonical session id',
+      code: "session_id_ambiguous",
+      status: 409,
+      candidate_ids: ["sess_a1", "sess_a2"],
     });
   });
 });

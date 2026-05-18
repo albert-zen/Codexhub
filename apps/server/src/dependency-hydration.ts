@@ -191,7 +191,8 @@ function runDependencyCommand(
   args: string[],
   options: { cwd: string },
 ): CommandResult {
-  const result = spawnSync(command, args, {
+  const invocation = dependencySpawnInvocation(command, args);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     encoding: "utf8",
     windowsHide: true,
@@ -203,6 +204,21 @@ function runDependencyCommand(
   };
   if (result.error) commandResult.error = result.error.message;
   return commandResult;
+}
+
+export function dependencySpawnInvocation(
+  command: string,
+  args: string[],
+  platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform !== "win32" || !command.toLowerCase().endsWith(".cmd")) {
+    return { command, args };
+  }
+
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", command, ...args],
+  };
 }
 
 function assertSafeWorkspaceNodeModules(workspacePath: string): void {

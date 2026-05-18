@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  dependencySpawnInvocation,
   hydrateWorktreeDependencies,
   pnpmCommand,
   type CommandRunner,
@@ -79,6 +80,18 @@ describe("worktree dependency hydration", () => {
   it("uses the Windows pnpm command shim when needed", () => {
     expect(pnpmCommand("win32")).toBe("pnpm.cmd");
     expect(pnpmCommand("linux")).toBe("pnpm");
+  });
+
+  it("runs Windows command shims through cmd.exe", () => {
+    expect(
+      dependencySpawnInvocation("pnpm.cmd", ["--version"], "win32"),
+    ).toMatchObject({
+      args: ["/d", "/s", "/c", "pnpm.cmd", "--version"],
+    });
+    expect(dependencySpawnInvocation("pnpm", ["--version"], "linux")).toEqual({
+      command: "pnpm",
+      args: ["--version"],
+    });
   });
 
   it("fails clearly when the pnpm source checkout has not been installed", async () => {

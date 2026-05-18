@@ -11,6 +11,11 @@ import type {
   WorkerSession,
   WorkerSessionStatus,
 } from "@codexhub/core";
+import {
+  SESSION_ACTIONS,
+  getSessionActionAvailability,
+  type SessionAction,
+} from "./session-actions.js";
 import "./styles.css";
 
 type SendMessageMode = Exclude<MessageMode, "initial">;
@@ -258,18 +263,6 @@ async function updateSessionState(
   );
 }
 
-function canSend(status: WorkerSessionStatus, mode: SendMessageMode): boolean {
-  if (mode === "steer")
-    return status === "running" || status === "awaiting_input";
-  return status === "awaiting_input";
-}
-
-function canFinish(status: WorkerSessionStatus): boolean {
-  return (
-    status === "starting" || status === "running" || status === "awaiting_input"
-  );
-}
-
 function formatDate(value: string | null | undefined): string {
   if (!value) return "never";
   const date = new Date(value);
@@ -448,10 +441,20 @@ function App() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [submitting, setSubmitting] = useState<
-    "steer" | "continue" | "stop" | "complete" | null
-  >(null);
+  const [submitting, setSubmitting] = useState<SessionAction | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const actionAvailability = selectedSession
+    ? getSessionActionAvailability({
+        status: selectedSession.status,
+        message,
+        submitting,
+      })
+    : null;
+  const disabledActions = actionAvailability
+    ? SESSION_ACTIONS.filter((action) => actionAvailability[action].disabled)
+    : [];
+  const actionHelpId =
+    disabledActions.length > 0 ? "session-action-help" : undefined;
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -598,8 +601,12 @@ function App() {
   async function handleSend(mode: SendMessageMode) {
     if (!selectedSession) return;
     const content = message.trim();
-    if (mode === "steer" && !content) return;
-    if (mode === "continue" && !content) return;
+    const availability = getSessionActionAvailability({
+      status: selectedSession.status,
+      message: content,
+      submitting,
+    })[mode];
+    if (availability.disabled) return;
     setSubmitting(mode);
     setError(null);
     try {
@@ -615,6 +622,12 @@ function App() {
 
   async function handleAction(action: "stop" | "complete") {
     if (!selectedSession) return;
+    const availability = getSessionActionAvailability({
+      status: selectedSession.status,
+      message,
+      submitting,
+    })[action];
+    if (availability.disabled) return;
     setSubmitting(action);
     setError(null);
     try {
@@ -803,10 +816,11 @@ function App() {
                     className="button"
                     type="button"
                     onClick={() => void handleSend("steer")}
-                    disabled={
-                      !canSend(selectedSession.status, "steer") ||
-                      !message.trim() ||
-                      submitting !== null
+                    disabled={actionAvailability?.steer.disabled ?? true}
+                    aria-describedby={
+                      actionAvailability?.steer.disabled
+                        ? actionHelpId
+                        : undefined
                     }
                   >
                     Send Steer
@@ -815,10 +829,11 @@ function App() {
                     className="button button-secondary"
                     type="button"
                     onClick={() => void handleSend("continue")}
-                    disabled={
-                      !canSend(selectedSession.status, "continue") ||
-                      !message.trim() ||
-                      submitting !== null
+                    disabled={actionAvailability?.continue.disabled ?? true}
+                    aria-describedby={
+                      actionAvailability?.continue.disabled
+                        ? actionHelpId
+                        : undefined
                     }
                   >
                     Continue
@@ -827,8 +842,11 @@ function App() {
                     className="button button-danger"
                     type="button"
                     onClick={() => void handleAction("stop")}
-                    disabled={
-                      !canFinish(selectedSession.status) || submitting !== null
+                    disabled={actionAvailability?.stop.disabled ?? true}
+                    aria-describedby={
+                      actionAvailability?.stop.disabled
+                        ? actionHelpId
+                        : undefined
                     }
                   >
                     Stop
@@ -837,13 +855,26 @@ function App() {
                     className="button button-secondary"
                     type="button"
                     onClick={() => void handleAction("complete")}
-                    disabled={
-                      !canFinish(selectedSession.status) || submitting !== null
+                    disabled={actionAvailability?.complete.disabled ?? true}
+                    aria-describedby={
+                      actionAvailability?.complete.disabled
+                        ? actionHelpId
+                        : undefined
                     }
                   >
                     Complete
                   </button>
                 </div>
+                {actionAvailability && disabledActions.length > 0 ? (
+                  <dl className="action-help" id="session-action-help">
+                    {disabledActions.map((action) => (
+                      <div key={action}>
+                        <dt>{actionAvailability[action].label}</dt>
+                        <dd>{actionAvailability[action].reasons.join(" ")}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
               </section>
 
               <section className="items-block" aria-label="Session transcript">

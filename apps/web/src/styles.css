@@ -360,6 +360,31 @@ select {
   margin-top: 8px;
 }
 
+.action-help {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  color: #5f6d78;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.action-help > div {
+  display: grid;
+  grid-template-columns: minmax(86px, max-content) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.action-help dt {
+  color: #2c3a45;
+  font-weight: 700;
+}
+
+.action-help dd {
+  min-width: 0;
+  margin: 0;
+}
+
 .button {
   min-height: 32px;
   border: 1px solid #2266a8;

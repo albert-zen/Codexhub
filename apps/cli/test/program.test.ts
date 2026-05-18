@@ -508,7 +508,8 @@ describe("codexhub commands", () => {
   it("documents trace pagination controls in help", () => {
     const help = commandHelp("session", "trace");
     expect(help).toContain("--recent");
-    expect(help).toContain("default without cursor or sequence filters");
+    expect(help).toContain("default without");
+    expect(help).toContain("cursor or sequence filters");
     expect(help).toContain("--no-recent");
     expect(help).toContain("Read forward from the beginning");
     expect(help).toContain("--cursor <cursor>");

@@ -163,6 +163,9 @@ the first CLI/web pass:
 - `GET /sessions/:id`
 - `POST /sessions/:id/messages`
 - `GET /sessions/:id/messages`
+- `GET /sessions/:id/review-findings?cursor=&limit=`
+- `POST /sessions/:id/review-findings`
+- `PUT /sessions/:id/review-findings/:findingId`
 - `POST /sessions/:id/stop`
 - `POST /sessions/:id/complete`
 - `GET /sessions/:id/items?type=&after=&limit=`

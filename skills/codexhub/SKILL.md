@@ -169,6 +169,10 @@ codexhub session items <session_id> --limit 20 --after <sequence> --json
 Default to `agentmessage` when the manager only needs high-signal status.
 Request tool calls, tool results, and raw items only when necessary.
 
+Session commands accept either the canonical `sess_...` id or a unique leading
+prefix. Keep storing and reporting canonical ids in manager state. If a prefix
+is ambiguous, choose a longer prefix or the full id.
+
 ## Sending Messages
 
 Use explicit modes:
@@ -177,6 +181,8 @@ Use explicit modes:
 codexhub session send <session_id> --mode steer --message "Stay within apps/cli and keep JSON output stable."
 codexhub session send <session_id> --mode continue --message "Continue with the next acceptance criterion and report validation results."
 ```
+
+Side-effect commands reject ambiguous session prefixes before changing state.
 
 Mode expectations:
 

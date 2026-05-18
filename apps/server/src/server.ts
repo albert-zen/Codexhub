@@ -158,8 +158,8 @@ function registerApiRoutes(
     if (!state.repo.getRunGroup(id))
       throw new HttpError(404, "run_group_not_found", "run group not found");
     const sessionId = requiredString(asRecord(request.body), "session_id");
-    requireSession(state.repo, sessionId);
-    state.repo.addSessionToRunGroup(id, sessionId);
+    const session = requireSession(state.repo, sessionId);
+    state.repo.addSessionToRunGroup(id, session.id);
     return {
       run_group: state.repo.getRunGroup(id),
       sessions: state.repo.listRunGroupSessions(id),
@@ -423,16 +423,20 @@ function registerApiRoutes(
   });
 
   app.post(path("/sessions/:id/stop"), async (request) => {
-    const id = requiredString(asRecord(request.params), "id");
-    requireSession(state.repo, id);
-    state.runtime.stopSession(id);
-    return { session: requireSession(state.repo, id) };
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    state.runtime.stopSession(session.id);
+    return { session: requireSession(state.repo, session.id) };
   });
 
   app.post(path("/sessions/:id/complete"), async (request) => {
-    const id = requiredString(asRecord(request.params), "id");
-    requireSession(state.repo, id);
-    return { session: state.runtime.completeSession(id) };
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    return { session: state.runtime.completeSession(session.id) };
   });
 
   app.get(path("/sessions/:id/items"), async (request) => {
@@ -452,15 +456,15 @@ function registerApiRoutes(
   app.get(path("/items"), async (request) => {
     const query = asRecord(request.query);
     const sessionId = requiredString(query, "session_id");
-    requireSession(state.repo, sessionId);
-    return itemPageResponse(state, sessionId, query);
+    const session = requireSession(state.repo, sessionId);
+    return itemPageResponse(state, session.id, query);
   });
 
   app.get(path("/transcript"), async (request) => {
     const query = asRecord(request.query);
     const sessionId = requiredString(query, "session_id");
-    requireSession(state.repo, sessionId);
-    return transcriptPageResponse(state, sessionId, query);
+    const session = requireSession(state.repo, sessionId);
+    return transcriptPageResponse(state, session.id, query);
   });
 
   app.get(path("/sessions/:id/items/latest"), async (request) =>
@@ -569,11 +573,19 @@ function latestManagerItem(
   return { ...source, text_excerpt: session.last_agent_message };
 }
 
-function requireSession(repo: HubRepository, id: string): WorkerSession {
-  const session = repo.getSession(id);
-  if (!session)
+function requireSession(repo: HubRepository, reference: string): WorkerSession {
+  const result = repo.resolveSession(reference);
+  if (result.status === "found") return result.session;
+  if (result.status === "ambiguous") {
+    throw new HttpError(
+      409,
+      "session_id_ambiguous",
+      `session id prefix "${result.reference}" is ambiguous; pass a longer prefix or canonical session id`,
+    );
+  }
+  if (result.status === "not_found")
     throw new HttpError(404, "session_not_found", "session not found");
-  return session;
+  throw new HttpError(404, "session_not_found", "session not found");
 }
 
 function tryBuildWorkspace(input: Parameters<typeof buildWorkspace>[0]) {

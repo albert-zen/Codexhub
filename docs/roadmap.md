@@ -40,6 +40,8 @@ The repository currently contains:
   dispatch, and a fake worker path for integration tests.
 - `apps/cli` with project, workspace, session, item, latest/result/trace/watch,
   send, stop, and recent-session commands. Leaf commands support `--json`.
+  Session commands accept canonical session ids or unique leading session id
+  prefixes while API responses keep canonical ids.
 - `apps/web` with a compact project/session/detail UI, readable transcript,
   item type filter, latest agent message, send steer/continue, stop, and
   complete actions.
@@ -168,6 +170,11 @@ the first CLI/web pass:
 
 API responses use shared core shapes where possible and return compact errors
 with machine-readable codes.
+
+Session `:id` route parameters and `session_id` query/body fields accept either
+the canonical `sess_...` id or a unique leading prefix. Ambiguous prefixes return
+`session_id_ambiguous`, and side-effect routes reject them before changing
+state.
 
 ## Execution Plan
 

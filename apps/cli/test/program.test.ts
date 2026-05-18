@@ -518,6 +518,18 @@ describe("codexhub commands", () => {
     expect(help).toContain("--before-sequence <n>");
   });
 
+  it("documents unique short prefixes for session references", () => {
+    expect(commandHelp("session", "inspect")).toContain(
+      "Session ID or unique prefix",
+    );
+    expect(commandHelp("session", "send")).toContain(
+      "Session ID or unique prefix",
+    );
+    expect(commandHelp("run-group", "add-session")).toContain(
+      "Session ID or unique prefix",
+    );
+  });
+
   it("keeps trace JSON transcript fields at the top level", async () => {
     const output: string[] = [];
     const program = createProgram({
@@ -639,6 +651,38 @@ describe("codexhub commands", () => {
       "http://api.test/sessions/sess_1/messages",
       "http://api.test/sessions/sess_1/items?type=toolcall&limit=20&recent=true",
     ]);
+  });
+
+  it("keeps canonical session ids in filtered trace JSON", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        const text = String(url);
+        if (text.endsWith("/sessions/sess_ab/messages")) {
+          return jsonResponse({ items: [] });
+        }
+        return jsonResponse({
+          session_id: "sess_full",
+          items: [{ id: "item_1", type: "toolcall" }],
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "trace",
+      "sess_ab",
+      "--type",
+      "toolcall",
+      "--json",
+    ]);
+
+    expect(JSON.parse(output.join("")).session_id).toBe("sess_full");
   });
 
   it("passes non-recent filtered trace pagination to item reads", async () => {

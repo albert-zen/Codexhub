@@ -188,6 +188,90 @@ describe("Codexhub API", () => {
     expect(invalidReviewStatus.json().error.code).toBe("invalid_review_status");
   });
 
+  it("resolves unique short session prefixes and returns canonical ids", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "prefix-demo",
+      default_workspace_root: tempDir,
+    });
+    const started = await createFakeSession(project.project.id, "prefix-one");
+    const sessionId = started.session.id;
+    const shortPrefix = sessionId.slice(0, 12);
+
+    const inspected = await get(`/api/v1/sessions/${shortPrefix}`);
+    expect(inspected.session.id).toBe(sessionId);
+
+    const latest = await get(`/api/v1/sessions/${shortPrefix}/latest`);
+    expect(latest.session_id).toBe(sessionId);
+    expect(latest.last_agent_message).toContain("prefix-one");
+
+    const items = await get(
+      `/api/v1/items?session_id=${shortPrefix}&type=agentmessage`,
+    );
+    expect(items.session_id).toBe(sessionId);
+    expect(items.items).toHaveLength(1);
+
+    const continued = await post(`/api/v1/sessions/${shortPrefix}/messages`, {
+      mode: "continue",
+      content: "Use the canonical id in responses.",
+      sender_type: "manager_agent",
+    });
+    expect(continued.session.id).toBe(sessionId);
+    expect(continued.message.session_id).toBe(sessionId);
+  });
+
+  it("refuses ambiguous short session prefixes before side effects", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "ambiguous-prefix-demo",
+      default_workspace_root: tempDir,
+    });
+    const first = await createFakeSession(project.project.id, "ambiguous-one");
+    const second = await createFakeSession(project.project.id, "ambiguous-two");
+    const ambiguousPrefix = "sess_";
+
+    const send = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${ambiguousPrefix}/messages`,
+      payload: {
+        mode: "continue",
+        content: "This must not be sent.",
+        sender_type: "manager_agent",
+      },
+    });
+    expect(send.statusCode).toBe(409);
+    expect(send.json().error.code).toBe("session_id_ambiguous");
+
+    const stop = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${ambiguousPrefix}/stop`,
+      payload: {},
+    });
+    expect(stop.statusCode).toBe(409);
+    expect(stop.json().error.code).toBe("session_id_ambiguous");
+
+    const runGroup = await post("/api/v1/run-groups", {
+      name: "ambiguous-prefix-run-group",
+      project_id: project.project.id,
+    });
+    const addSession = await app.inject({
+      method: "POST",
+      url: `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+      payload: { session_id: ambiguousPrefix },
+    });
+    expect(addSession.statusCode).toBe(409);
+    expect(addSession.json().error.code).toBe("session_id_ambiguous");
+
+    for (const sessionId of [first.session.id, second.session.id]) {
+      const inspected = await get(`/api/v1/sessions/${sessionId}`);
+      expect(inspected.session.status).toBe("awaiting_input");
+      const messages = await get(`/api/v1/sessions/${sessionId}/messages`);
+      expect(messages.messages).toHaveLength(1);
+    }
+    const members = await get(
+      `/api/v1/run-groups/${runGroup.run_group.id}/sessions`,
+    );
+    expect(members.sessions).toHaveLength(0);
+  });
+
   it("returns complete transcript entries across raw item page boundaries", async () => {
     const dbPath = join(tempDir, "transcript.sqlite");
     const database = openDatabase({ path: dbPath });
@@ -997,6 +1081,22 @@ async function put(url: string, payload: unknown): Promise<any> {
   expect(response.statusCode).toBeGreaterThanOrEqual(200);
   expect(response.statusCode).toBeLessThan(300);
   return response.json();
+}
+
+async function createFakeSession(
+  projectId: string,
+  workspaceName: string,
+): Promise<any> {
+  const workspace = await post("/api/v1/workspaces", {
+    project_id: projectId,
+    source_type: "local",
+    path: join(tempDir, workspaceName),
+  });
+  return post("/api/v1/sessions", {
+    workspace_id: workspace.workspace.id,
+    initial_message: `Inspect ${workspaceName} and report status.`,
+    codex_options: { fake: true },
+  });
 }
 
 async function getFrom(instance: App, url: string): Promise<any> {

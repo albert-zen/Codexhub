@@ -135,6 +135,7 @@ interface ReviewStatusSetOptions extends BaseCommandOptions {
 }
 
 const DEFAULT_API = process.env.CODEXHUB_API ?? "http://127.0.0.1:4317";
+const SESSION_REF_DESCRIPTION = "Session ID or unique prefix";
 
 export function createProgram(env: CliEnvironment = {}): Command {
   const program = new Command();
@@ -221,7 +222,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
   jsonOption(runGroup.command("add-session").description("Add session"))
     .argument("<run-group-id>", "Run group ID")
-    .requiredOption("--session <id>", "Session ID")
+    .requiredOption("--session <id>", SESSION_REF_DESCRIPTION)
     .action((runGroupId: string, opts: RunGroupAddSessionOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).post(
@@ -362,7 +363,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
 
   jsonOption(session.command("inspect").description("Inspect a session"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .action((sessionId: string, opts: BaseCommandOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get(
@@ -377,7 +378,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
   jsonOption(
     session.command("latest").description("Print the latest agent message"),
   )
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--type <type>", "Item type filter")
     .action((sessionId: string, opts: SessionLatestOptions) =>
       runAction(env, opts, async () => {
@@ -396,7 +397,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
       .command("result")
       .description("Print a compact result for the latest agent message"),
   )
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--type <type>", "Item type filter")
     .action((sessionId: string, opts: SessionLatestOptions) =>
       runAction(env, opts, async () => {
@@ -411,7 +412,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
 
   jsonOption(session.command("trace").description("Print a readable trace"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--type <type>", "Item type filter", "all")
     .option(
       "--limit <n>",
@@ -455,7 +456,11 @@ export function createProgram(env: CliEnvironment = {}): Command {
               }),
             }),
           ]);
-          const result = { session_id: sessionId, messages, items };
+          const result = {
+            session_id: sessionIdFromResponses(sessionId, items, messages),
+            messages,
+            items,
+          };
           printResult(env, opts, result, () => formatTrace(messages, items));
           return;
         }
@@ -485,7 +490,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
       .command("watch")
       .description("Print the latest readable trace window"),
   )
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--type <type>", "Item type filter", "all")
     .option(
       "--limit <n>",
@@ -515,7 +520,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
                   }),
                 }),
               ]).then(([messages, items]) => ({
-                session_id: sessionId,
+                session_id: sessionIdFromResponses(sessionId, items, messages),
                 messages,
                 items,
               }))
@@ -531,7 +536,11 @@ export function createProgram(env: CliEnvironment = {}): Command {
         const traceRecord = asRecord(trace);
         const result = usesFilteredItemTrace(opts)
           ? {
-              session_id: sessionId,
+              session_id: sessionIdFromResponses(
+                sessionId,
+                traceRecord,
+                sessionRecord,
+              ),
               session: sessionRecord,
               messages: traceRecord?.messages,
               items: traceRecord?.items,
@@ -549,7 +558,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
 
   jsonOption(session.command("items").description("List session items"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--type <type>", "Item type filter")
     .option("--limit <n>", "Maximum number of items", parsePositiveInt)
     .option("--cursor <cursor>", "Page cursor")
@@ -584,7 +593,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
 
   jsonOption(session.command("send").description("Send a follow-up message"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .argument("[message...]", "Message content")
     .option("-m, --message <text>", "Message content")
     .option("--file <path>", "Read message content from a file")
@@ -623,7 +632,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
     "Inspect or update review-gate status metadata",
   );
   jsonOption(reviewStatus.command("get").description("Get review status"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .action((sessionId: string, opts: BaseCommandOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get(
@@ -633,7 +642,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
       }),
     );
   jsonOption(reviewStatus.command("set").description("Set review status"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .option("--implementation-done", "Implementation pass is done")
     .option("--self-validation-done", "Worker ran its own validation")
     .option("--review-requested", "Review subagent has been requested")
@@ -660,7 +669,7 @@ export function createProgram(env: CliEnvironment = {}): Command {
   session.addCommand(reviewStatus);
 
   jsonOption(session.command("stop").description("Stop a session"))
-    .argument("<session-id>", "Session ID")
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .action((sessionId: string, opts: BaseCommandOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).post(
@@ -1138,6 +1147,23 @@ function transcriptResult(
   };
   if (session !== undefined) result.session = session;
   return result;
+}
+
+function sessionIdFromResponses(
+  fallback: string,
+  ...values: unknown[]
+): string {
+  for (const value of values) {
+    const record = asRecord(value);
+    const sessionId =
+      stringField(record, "session_id") ??
+      stringField(asRecord(record?.session), "id");
+    if (sessionId) return sessionId;
+
+    const id = stringField(record, "id");
+    if (id?.startsWith("sess_")) return id;
+  }
+  return fallback;
 }
 
 function formatTrace(messagesValue: unknown, itemsValue: unknown): string {

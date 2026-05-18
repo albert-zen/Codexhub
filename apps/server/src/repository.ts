@@ -103,6 +103,15 @@ interface RecentTranscriptUnit {
   transcript_sequence: number;
 }
 
+export type SessionResolution =
+  | { status: "found"; session: WorkerSession }
+  | { status: "not_found"; reference: string }
+  | {
+      status: "ambiguous";
+      reference: string;
+      matches: WorkerSession[];
+    };
+
 export class HubRepository {
   constructor(private readonly db: DatabaseSync) {}
 
@@ -412,6 +421,32 @@ export class HubRepository {
       .prepare("SELECT * FROM worker_sessions WHERE id = ? LIMIT 1")
       .get(id);
     return row ? sessionFromRow(row) : null;
+  }
+
+  resolveSession(reference: string): SessionResolution {
+    const sessionReference = reference.trim();
+    const exact = this.getSession(sessionReference);
+    if (exact) return { status: "found", session: exact };
+
+    const matches = this.db
+      .prepare(
+        `SELECT * FROM worker_sessions
+         WHERE substr(id, 1, ?) = ?
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 2`,
+      )
+      .all(sessionReference.length, sessionReference)
+      .map(sessionFromRow);
+
+    if (matches.length === 0) {
+      return { status: "not_found", reference: sessionReference };
+    }
+    if (matches.length > 1) {
+      return { status: "ambiguous", reference: sessionReference, matches };
+    }
+    const [session] = matches;
+    if (!session) return { status: "not_found", reference: sessionReference };
+    return { status: "found", session };
   }
 
   reconcileUnavailableTransientSessions(

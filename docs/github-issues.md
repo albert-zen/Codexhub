@@ -101,3 +101,12 @@ reading path aligned with that tracker.
    - Add a repeatable fake-mode dogfood smoke path, with real Codex mode manual
      and opt-in.
    - Depends on `#19` and `#23`.
+
+## Later Closed Follow-Ups
+
+- `#38 feat(session): accept unique short session prefixes`
+  - Session commands can use canonical `sess_...` ids or unique leading
+    prefixes.
+  - API responses keep canonical ids unchanged.
+  - Ambiguous prefixes return `session_id_ambiguous`; side-effect commands
+    refuse them before changing state.

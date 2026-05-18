@@ -23,6 +23,10 @@ body {
   background: linear-gradient(180deg, #f8fafb 0, #eef2f4 220px), #eef2f4;
 }
 
+#root {
+  height: 100vh;
+}
+
 button,
 textarea,
 select,
@@ -40,7 +44,9 @@ button:disabled {
 
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  overflow: hidden;
+  height: 100vh;
+  min-height: 0;
   flex-direction: column;
   gap: 12px;
   padding: 18px;
@@ -83,6 +89,7 @@ button:disabled {
 
 .workspace-grid {
   display: grid;
+  overflow: hidden;
   flex: 1;
   grid-template-columns: minmax(220px, 260px) minmax(280px, 340px) minmax(
       0,
@@ -237,6 +244,7 @@ button:disabled {
 }
 
 .detail-panel {
+  min-height: 0;
   overflow: hidden;
   background: #f6f8fa;
 }

@@ -138,6 +138,10 @@ button:disabled {
   min-height: 0;
 }
 
+.session-list {
+  flex: 1;
+}
+
 .list-row {
   display: flex;
   width: 100%;
@@ -380,7 +384,96 @@ button:disabled {
   gap: 8px;
 }
 
+.start-session-block {
+  flex: none;
+  border-bottom: 1px solid #e5eaee;
+  background: #fbfcfd;
+  padding: 10px 12px;
+}
+
+.follow-up-block {
+  border-top: 1px solid #edf1f4;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.compact-heading {
+  margin-bottom: 8px;
+}
+
+.session-draft-form {
+  display: grid;
+  gap: 8px;
+}
+
+.field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.field span,
+.task-spec-fields summary,
+.form-help,
+.form-error {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.field span,
+.task-spec-fields summary {
+  color: #52606b;
+  font-weight: 700;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.task-spec-fields {
+  overflow: hidden;
+  border: 1px solid #dce4ea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.task-spec-fields summary {
+  cursor: pointer;
+  padding: 7px 9px;
+}
+
+.task-spec-fields summary:hover {
+  background: #f4f7f9;
+}
+
+.form-action-row {
+  margin-top: 0;
+}
+
+.form-help {
+  margin: 0;
+  padding-left: 18px;
+  color: #6b7580;
+}
+
+.form-error {
+  border: 1px solid #efb0a8;
+  border-radius: 8px;
+  margin: 0;
+  background: #fff4f2;
+  color: #8d2d21;
+  padding: 7px 9px;
+}
+
 textarea,
+input[type="text"],
 select {
   border: 1px solid #cbd5dd;
   border-radius: 8px;
@@ -389,6 +482,7 @@ select {
 }
 
 textarea:focus,
+input[type="text"]:focus,
 select:focus,
 button:focus-visible {
   outline: 2px solid #82b7ed;
@@ -409,6 +503,13 @@ select {
   min-width: 126px;
   height: 30px;
   padding: 0 8px;
+}
+
+input[type="text"] {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 13px;
 }
 
 .action-row {
@@ -904,6 +1005,10 @@ pre {
   .section-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
   }
 
   .item-controls {

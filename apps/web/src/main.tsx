@@ -10,12 +10,21 @@ import type {
   TranscriptEntry,
   WorkerSession,
   WorkerSessionStatus,
+  Workspace,
 } from "@codexhub/core";
 import {
   SESSION_ACTIONS,
   getSessionActionAvailability,
   type SessionAction,
 } from "./session-actions.js";
+import {
+  buildFollowUpSessionRequest,
+  buildStartSessionRequest,
+  canStartFollowUpFromStatus,
+  createEmptySessionDraft,
+  validateSessionDraft,
+  type SessionDraft,
+} from "./session-forms.js";
 import {
   RECENT_TRANSCRIPT_CURSOR,
   type TranscriptCursor,
@@ -129,11 +138,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    const errorBody = isObject(body) && isObject(body.error) ? body.error : {};
+    const code =
+      isObject(errorBody) && typeof errorBody.code === "string"
+        ? errorBody.code
+        : null;
     const detail =
       isObject(body) && typeof body.message === "string"
         ? body.message
-        : response.statusText;
-    throw new ApiError(`${response.status} ${detail}`.trim(), response.status);
+        : isObject(errorBody) && typeof errorBody.message === "string"
+          ? errorBody.message
+          : response.statusText;
+    throw new ApiError(
+      `${response.status}${code ? ` ${code}:` : ""} ${detail}`.trim(),
+      response.status,
+    );
   }
 
   return body as T;
@@ -154,6 +173,13 @@ async function withFallback<T>(
 async function fetchProjects(): Promise<Project[]> {
   const body = await request<unknown>("/projects");
   return listFrom<Project>(body, "projects");
+}
+
+async function fetchWorkspaces(projectId: ID): Promise<Workspace[]> {
+  const body = await request<unknown>(
+    `/workspaces${queryString({ project_id: projectId })}`,
+  );
+  return listFrom<Workspace>(body, "workspaces");
 }
 
 async function fetchSessions(projectId: ID): Promise<WorkerSession[]> {
@@ -278,6 +304,31 @@ async function updateSessionState(
   );
 }
 
+async function startSession(
+  projectId: ID,
+  draft: SessionDraft,
+): Promise<WorkerSession> {
+  const body = await request<unknown>("/sessions", {
+    method: "POST",
+    body: JSON.stringify(buildStartSessionRequest(projectId, draft)),
+  });
+  return entityFrom<WorkerSession>(body, "session");
+}
+
+async function startFollowUpSession(
+  previousSessionId: ID,
+  draft: SessionDraft,
+): Promise<WorkerSession> {
+  const body = await request<unknown>(
+    `/sessions/${encodeURIComponent(previousSessionId)}/follow-up`,
+    {
+      method: "POST",
+      body: JSON.stringify(buildFollowUpSessionRequest(draft)),
+    },
+  );
+  return entityFrom<WorkerSession>(body, "session");
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return "never";
   const date = new Date(value);
@@ -305,6 +356,37 @@ function compactText(
 
 function statusClass(status: WorkerSessionStatus): string {
   return `status status-${status.replace("_", "-")}`;
+}
+
+function statusLabel(status: WorkerSessionStatus): string {
+  return status.replace("_", " ");
+}
+
+function workspaceLabel(workspace: Workspace): string {
+  const status =
+    workspace.status === "ready"
+      ? ""
+      : ` (${workspace.status.replace("_", " ")})`;
+  const branch = workspace.branch ? ` @ ${workspace.branch}` : "";
+  return `${shortId(workspace.id)}${branch}${status} - ${workspace.cwd}`;
+}
+
+function preferredWorkspaceId(
+  workspaces: Workspace[],
+  current: string,
+  fallback?: string | null,
+): string {
+  if (current && workspaces.some((workspace) => workspace.id === current)) {
+    return current;
+  }
+  if (fallback && workspaces.some((workspace) => workspace.id === fallback)) {
+    return fallback;
+  }
+  return (
+    workspaces.find((workspace) => workspace.status === "ready")?.id ??
+    workspaces[0]?.id ??
+    ""
+  );
 }
 
 function displayJson(value: unknown): string {
@@ -442,9 +524,174 @@ function TranscriptMetadataDetails({ entry }: { entry: TranscriptEntry }) {
   );
 }
 
+interface SessionDraftFormProps {
+  idPrefix: string;
+  draft: SessionDraft;
+  workspaces: Workspace[];
+  disabled: boolean;
+  submitting: boolean;
+  submitDisabled: boolean;
+  submitLabel: string;
+  submittingLabel: string;
+  validationMessages: string[];
+  error: string | null;
+  onDraftChange: (draft: SessionDraft) => void;
+  onSubmit: () => Promise<void>;
+}
+
+function SessionDraftForm({
+  idPrefix,
+  draft,
+  workspaces,
+  disabled,
+  submitting,
+  submitDisabled,
+  submitLabel,
+  submittingLabel,
+  validationMessages,
+  error,
+  onDraftChange,
+  onSubmit,
+}: SessionDraftFormProps) {
+  const fieldId = (name: string) => `${idPrefix}-${name}`;
+  const setDraftField = (field: keyof SessionDraft, value: string) => {
+    onDraftChange({ ...draft, [field]: value });
+  };
+
+  return (
+    <form
+      className="session-draft-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!submitDisabled) void onSubmit();
+      }}
+    >
+      <label className="field" htmlFor={fieldId("workspace")}>
+        <span>Workspace</span>
+        <select
+          id={fieldId("workspace")}
+          value={draft.workspaceId}
+          onChange={(event) => setDraftField("workspaceId", event.target.value)}
+          disabled={disabled || workspaces.length === 0}
+        >
+          <option value="">Select workspace</option>
+          {workspaces.map((workspace) => (
+            <option key={workspace.id} value={workspace.id}>
+              {workspaceLabel(workspace)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field" htmlFor={fieldId("prompt")}>
+        <span>Initial prompt</span>
+        <textarea
+          id={fieldId("prompt")}
+          value={draft.prompt}
+          onChange={(event) => setDraftField("prompt", event.target.value)}
+          placeholder="Describe the work for the worker..."
+          rows={3}
+          disabled={disabled}
+        />
+      </label>
+
+      <details className="task-spec-fields">
+        <summary>Task spec fields</summary>
+        <div className="field-grid">
+          <label className="field" htmlFor={fieldId("task-ref")}>
+            <span>Ref</span>
+            <input
+              id={fieldId("task-ref")}
+              type="text"
+              value={draft.taskRef}
+              onChange={(event) => setDraftField("taskRef", event.target.value)}
+              disabled={disabled}
+            />
+          </label>
+          <label className="field" htmlFor={fieldId("task-title")}>
+            <span>Title</span>
+            <input
+              id={fieldId("task-title")}
+              type="text"
+              value={draft.taskTitle}
+              onChange={(event) =>
+                setDraftField("taskTitle", event.target.value)
+              }
+              disabled={disabled}
+            />
+          </label>
+          <label className="field field-wide" htmlFor={fieldId("task-intent")}>
+            <span>Intent</span>
+            <textarea
+              id={fieldId("task-intent")}
+              value={draft.taskIntent}
+              onChange={(event) =>
+                setDraftField("taskIntent", event.target.value)
+              }
+              rows={2}
+              disabled={disabled}
+            />
+          </label>
+          <label className="field field-wide" htmlFor={fieldId("task-scope")}>
+            <span>Scope</span>
+            <textarea
+              id={fieldId("task-scope")}
+              value={draft.taskScope}
+              onChange={(event) =>
+                setDraftField("taskScope", event.target.value)
+              }
+              rows={2}
+              disabled={disabled}
+            />
+          </label>
+          <label
+            className="field field-wide"
+            htmlFor={fieldId("task-acceptance")}
+          >
+            <span>Acceptance</span>
+            <textarea
+              id={fieldId("task-acceptance")}
+              value={draft.taskAcceptance}
+              onChange={(event) =>
+                setDraftField("taskAcceptance", event.target.value)
+              }
+              rows={2}
+              disabled={disabled}
+            />
+          </label>
+        </div>
+      </details>
+
+      <div className="action-row form-action-row">
+        <button
+          className="button"
+          type="submit"
+          disabled={disabled || submitDisabled}
+        >
+          {submitting ? submittingLabel : submitLabel}
+        </button>
+      </div>
+
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {validationMessages.length > 0 ? (
+        <ul className="form-help">
+          {validationMessages.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
+      ) : null}
+    </form>
+  );
+}
+
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<ID | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [sessions, setSessions] = useState<WorkerSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<ID | null>(null);
   const [selectedSession, setSelectedSession] = useState<WorkerSession | null>(
@@ -470,11 +717,24 @@ function App() {
   const [itemNextCursor, setItemNextCursor] = useState<string | null>(null);
   const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
+  const [createDraft, setCreateDraft] = useState<SessionDraft>(() =>
+    createEmptySessionDraft(),
+  );
+  const [followUpDraft, setFollowUpDraft] = useState<SessionDraft>(() =>
+    createEmptySessionDraft(),
+  );
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState<SessionAction | null>(null);
+  const [submittingStart, setSubmittingStart] = useState(false);
+  const [submittingFollowUp, setSubmittingFollowUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createSessionError, setCreateSessionError] = useState<string | null>(
+    null,
+  );
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
   const actionAvailability = selectedSession
     ? getSessionActionAvailability({
         status: selectedSession.status,
@@ -487,6 +747,24 @@ function App() {
     : [];
   const actionHelpId =
     disabledActions.length > 0 ? "session-action-help" : undefined;
+  const followUpAvailable =
+    selectedSession !== null &&
+    canStartFollowUpFromStatus(selectedSession.status);
+  const createValidationMessages = [
+    ...(selectedProjectId ? [] : ["Select a project."]),
+    ...validateSessionDraft(createDraft, { requireWorkspace: true }),
+  ];
+  const followUpValidationMessages =
+    selectedSession && followUpAvailable
+      ? validateSessionDraft(followUpDraft, { requireWorkspace: true })
+      : [];
+  const createSubmitDisabled =
+    submittingStart || loadingWorkspaces || createValidationMessages.length > 0;
+  const followUpSubmitDisabled =
+    submittingFollowUp ||
+    loadingWorkspaces ||
+    !followUpAvailable ||
+    followUpValidationMessages.length > 0;
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -527,6 +805,30 @@ function App() {
       setError(`Projects: ${getErrorMessage(loadError)}`);
     } finally {
       setLoadingProjects(false);
+    }
+  }, []);
+
+  const loadWorkspaces = useCallback(async (projectId: ID) => {
+    setLoadingWorkspaces(true);
+    setError(null);
+    try {
+      const nextWorkspaces = await fetchWorkspaces(projectId);
+      setWorkspaces(nextWorkspaces);
+      setCreateDraft((current) => ({
+        ...current,
+        workspaceId: preferredWorkspaceId(nextWorkspaces, current.workspaceId),
+      }));
+      setFollowUpDraft((current) => ({
+        ...current,
+        workspaceId: preferredWorkspaceId(nextWorkspaces, current.workspaceId),
+      }));
+    } catch (loadError) {
+      setWorkspaces([]);
+      setCreateDraft((current) => ({ ...current, workspaceId: "" }));
+      setFollowUpDraft((current) => ({ ...current, workspaceId: "" }));
+      setError(`Workspaces: ${getErrorMessage(loadError)}`);
+    } finally {
+      setLoadingWorkspaces(false);
     }
   }, []);
 
@@ -611,12 +913,27 @@ function App() {
 
   useEffect(() => {
     if (!selectedProjectId) {
+      setWorkspaces([]);
       setSessions([]);
       setSelectedSessionId(null);
+      setCreateDraft((current) => ({ ...current, workspaceId: "" }));
+      setFollowUpDraft((current) => ({ ...current, workspaceId: "" }));
       return;
     }
+    void loadWorkspaces(selectedProjectId);
     void loadSessions(selectedProjectId);
-  }, [loadSessions, selectedProjectId]);
+  }, [loadSessions, loadWorkspaces, selectedProjectId]);
+
+  useEffect(() => {
+    setFollowUpDraft((current) => ({
+      ...current,
+      workspaceId: preferredWorkspaceId(
+        workspaces,
+        current.workspaceId,
+        selectedSession?.workspace_id,
+      ),
+    }));
+  }, [selectedSession?.workspace_id, workspaces]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -643,6 +960,15 @@ function App() {
       includeRawItems: showRawItems,
     });
   }, [itemType, loadDetail, selectedSessionId, showRawItems]);
+
+  useEffect(() => {
+    setFollowUpDraft(
+      createEmptySessionDraft(
+        preferredWorkspaceId(workspaces, "", selectedSession?.workspace_id),
+      ),
+    );
+    setFollowUpError(null);
+  }, [selectedSession?.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -690,6 +1016,47 @@ function App() {
       setError(`${action}: ${getErrorMessage(actionError)}`);
     } finally {
       setSubmitting(null);
+    }
+  }
+
+  async function handleStartSession() {
+    if (!selectedProjectId || createSubmitDisabled) return;
+    setSubmittingStart(true);
+    setCreateSessionError(null);
+    setError(null);
+    try {
+      const nextSession = await startSession(selectedProjectId, createDraft);
+      setCreateDraft(createEmptySessionDraft(createDraft.workspaceId));
+      await loadSessions(selectedProjectId);
+      setSelectedSessionId(nextSession.id);
+    } catch (startError) {
+      setCreateSessionError(
+        `Start session failed: ${getErrorMessage(startError)}`,
+      );
+    } finally {
+      setSubmittingStart(false);
+    }
+  }
+
+  async function handleStartFollowUp() {
+    if (!selectedSession || followUpSubmitDisabled) return;
+    setSubmittingFollowUp(true);
+    setFollowUpError(null);
+    setError(null);
+    try {
+      const nextSession = await startFollowUpSession(
+        selectedSession.id,
+        followUpDraft,
+      );
+      setFollowUpDraft(createEmptySessionDraft(followUpDraft.workspaceId));
+      if (selectedProjectId) await loadSessions(selectedProjectId);
+      setSelectedSessionId(nextSession.id);
+    } catch (startError) {
+      setFollowUpError(
+        `Start follow-up failed: ${getErrorMessage(startError)}`,
+      );
+    } finally {
+      setSubmittingFollowUp(false);
     }
   }
 
@@ -770,7 +1137,11 @@ function App() {
         </button>
       </header>
 
-      {error ? <div className="notice">{error}</div> : null}
+      {error ? (
+        <div className="notice" role="alert">
+          {error}
+        </div>
+      ) : null}
 
       <section className="workspace-grid" aria-label="Codexhub control plane">
         <aside className="panel project-panel" aria-label="Projects">
@@ -808,6 +1179,32 @@ function App() {
             </div>
             <span>{loadingSessions ? "Loading" : sessions.length}</span>
           </div>
+          <section className="start-session-block" aria-label="Start session">
+            <div className="section-heading compact-heading">
+              <h3>Start Session</h3>
+              <span>
+                {loadingWorkspaces
+                  ? "Loading workspaces"
+                  : `${workspaces.length} workspaces`}
+              </span>
+            </div>
+            <SessionDraftForm
+              idPrefix="start-session"
+              draft={createDraft}
+              workspaces={workspaces}
+              disabled={
+                !selectedProjectId || loadingWorkspaces || submittingStart
+              }
+              submitting={submittingStart}
+              submitDisabled={createSubmitDisabled}
+              submitLabel="Start"
+              submittingLabel="Starting"
+              validationMessages={createValidationMessages}
+              error={createSessionError}
+              onDraftChange={setCreateDraft}
+              onSubmit={handleStartSession}
+            />
+          </section>
           <div className="list session-list">
             {sessions.map((session) => (
               <button
@@ -1189,6 +1586,33 @@ function App() {
                       </div>
                     ))}
                   </dl>
+                ) : null}
+                {followUpAvailable ? (
+                  <section
+                    className="follow-up-block"
+                    aria-label="Start follow-up session"
+                  >
+                    <div className="section-heading compact-heading">
+                      <h3>Follow-up</h3>
+                      <span>
+                        Source is {statusLabel(selectedSession.status)}
+                      </span>
+                    </div>
+                    <SessionDraftForm
+                      idPrefix={`follow-up-${selectedSession.id}`}
+                      draft={followUpDraft}
+                      workspaces={workspaces}
+                      disabled={loadingWorkspaces || submittingFollowUp}
+                      submitting={submittingFollowUp}
+                      submitDisabled={followUpSubmitDisabled}
+                      submitLabel="Start Follow-up"
+                      submittingLabel="Starting Follow-up"
+                      validationMessages={followUpValidationMessages}
+                      error={followUpError}
+                      onDraftChange={setFollowUpDraft}
+                      onSubmit={handleStartFollowUp}
+                    />
+                  </section>
                 ) : null}
               </section>
             </>

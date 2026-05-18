@@ -462,7 +462,13 @@ function registerApiRoutes(
       });
     } catch (error) {
       if (error instanceof SessionProcessUnavailableError) {
-        throw new HttpError(409, error.code, error.message);
+        throw new HttpError(409, error.code, error.message, {
+          session_id: error.sessionId,
+          follow_up_available: true,
+          follow_up_endpoint: path(
+            `/sessions/${encodeURIComponent(error.sessionId)}/follow-up`,
+          ),
+        });
       }
       throw error;
     }

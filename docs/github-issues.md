@@ -115,3 +115,30 @@ reading path aligned with that tracker.
     last completed agent message only.
   - Raw `item/agentMessage/delta` payloads remain available through item reads
     and transcript/debug surfaces.
+
+- `#40 feat(runtime): keep worker sessions continuable across server hot reloads`
+  - Current implementation does not claim reattach durability. On server
+    startup, persisted `starting`, `running`, and `awaiting_input` sessions are
+    reconciled to `failed` with a restart-specific failure reason and cleared
+    `process_pid`.
+  - If a send reaches a non-terminal row without a managed live process, the API
+    returns `409 session_process_unavailable` with `session_id`,
+    `follow_up_available`, and `follow_up_endpoint`; the source session becomes
+    terminal and can be continued through a fresh follow-up session.
+  - Runtime details and the remaining boundary are documented in
+    `docs/runtime-supervisor.md`.
+
+## Runtime Supervisor Follow-Up Draft
+
+The remaining durable-runtime work is a real supervisor boundary, not a larger
+HTTP-route patch:
+
+- Move Codex `app-server` child-process ownership and stdio handles out of the
+  hot-reloading HTTP server.
+- Give the HTTP server an attach/lease protocol that can prove a persisted
+  session id maps to a live supervised Codex runtime before allowing `steer` or
+  `continue`.
+- Keep startup reconciliation conservative for any session the supervisor cannot
+  prove is attached and healthy.
+- Preserve the current follow-up-session fallback for failed, stopped, completed,
+  and unrecoverable orphan sessions.

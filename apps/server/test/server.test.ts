@@ -1768,6 +1768,11 @@ describe("Codexhub API", () => {
         expect(response.statusCode).toBe(409);
         expect(body.error.code).toBe("session_process_unavailable");
         expect(body.error.message).toContain("live Codex app-server process");
+        expect(body.error).toMatchObject({
+          session_id: sessionId,
+          follow_up_available: true,
+          follow_up_endpoint: `/api/v1/sessions/${sessionId}/follow-up`,
+        });
 
         const inspected = await getFrom(
           instance,
@@ -1789,6 +1794,26 @@ describe("Codexhub API", () => {
           status: "failed",
           error: expect.stringContaining("live Codex app-server process"),
         });
+
+        const followUp = await instance.inject({
+          method: "POST",
+          url: body.error.follow_up_endpoint,
+          payload: {
+            initial_message: "Continue in a fresh worker.",
+            sender_type: "manager_agent",
+            codex_options: { fake: true },
+          },
+        });
+        expect(followUp.statusCode).toBe(200);
+        const followUpBody = followUp.json();
+        expect(followUpBody).toMatchObject({
+          previous_session_id: sessionId,
+          session: {
+            previous_session_id: sessionId,
+            status: "awaiting_input",
+          },
+        });
+        expect(followUpBody.session.id).not.toBe(sessionId);
       } finally {
         await instance.close();
       }

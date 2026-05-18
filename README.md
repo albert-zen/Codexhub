@@ -106,6 +106,13 @@ $FollowUp.session.previous_session_id
 Pass `--workspace <workspace-id>` to run the follow-up in a different workspace
 from the same project.
 
+Server hot reloads can also orphan `starting`, `running`, or `awaiting_input`
+session records because the HTTP server owns the Codex process stdio handles.
+On startup, Codexhub marks those rows `failed` instead of pretending it can
+reattach. If a send finds a non-terminal row without a live process, the API
+returns `session_process_unavailable` with a `follow_up_endpoint` for starting a
+fresh related session.
+
 Workspace cleanup archives the workspace record by default. Add `--delete-files`
 only when you want Codexhub to remove the workspace directory after safety
 checks.

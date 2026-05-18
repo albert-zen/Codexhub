@@ -253,6 +253,9 @@ Status: complete for the first hardening pass.
 - Reconcile persisted `starting`, `running`, and non-continuable
   `awaiting_input` sessions after server restart when no live runtime process
   exists.
+- Treat missing live runtime handles as structured `session_process_unavailable`
+  API errors with a follow-up-session affordance; do not claim reattach
+  durability without a real supervisor boundary.
 - Centralize and validate host, port, and database runtime config.
 - Decide and test the route policy: `/api/v1` is canonical, root routes remain
   supported local aliases for CLI/web convenience.

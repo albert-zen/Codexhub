@@ -19,6 +19,8 @@ rediscover them from chat history.
   issues are the active execution source of truth.
 - `docs/task-spec-template.md`: task spec format for worker-sized tasks.
 - `docs/review-gate.md`: read-only review subagent workflow and checklist.
+- `docs/runtime-supervisor.md`: restart behavior, unavailable-process fallback,
+  and the boundary for a future durable Codex process supervisor.
 - `.github/ISSUE_TEMPLATE/task_spec.yml`: GitHub issue form for task specs.
 - `.github/pull_request_template.md`: PR checklist for task specs, validation,
   and review gate completion.
@@ -51,6 +53,8 @@ After each worker task, check and report:
 - Did Codexhub usage, delegation, or large-scale worker-control guidance change?
   Update `skills/codexhub/SKILL.md`.
 - Did product phase, baseline, or open work change? Update `docs/roadmap.md`.
+- Did worker process ownership, restart behavior, or missing-process fallback
+  change? Update `docs/runtime-supervisor.md`.
 - Did the task reveal subagent friction or coordination lessons? Update
   `docs/subagent-ops-log.md`.
 - Did the task confirm or reject a Symphony assumption? Update

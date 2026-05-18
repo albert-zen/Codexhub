@@ -207,6 +207,38 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toBe("Previous complete answer.");
   });
 
+  it("prints stable latest text for type all when a state item follows a draft", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "all",
+          item: {
+            type: "state",
+            codex_method: "turn/completed",
+            text_excerpt: null,
+          },
+          last_agent_message: "Previous complete answer.",
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "all",
+    ]);
+
+    expect(output.join("").trim()).toBe("Previous complete answer.");
+  });
+
   it("does not print an agent delta when stable latest is empty", async () => {
     const output: string[] = [];
     const program = createProgram({
@@ -248,6 +280,38 @@ describe("codexhub commands", () => {
             type: "agentmessage",
             codex_method: "item/agentMessage/delta",
             text_excerpt: "The worktree is clean. The",
+          },
+          last_agent_message: null,
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "all",
+    ]);
+
+    expect(output.join("").trim()).toBe("No agent message.");
+  });
+
+  it("does not print a type all non-agent item when stable latest is empty", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "all",
+          item: {
+            type: "state",
+            codex_method: "turn/completed",
+            text_excerpt: "turn finished",
           },
           last_agent_message: null,
         }),

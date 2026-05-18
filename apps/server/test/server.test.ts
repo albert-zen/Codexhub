@@ -706,6 +706,10 @@ describe("Codexhub API", () => {
           textDelta: " rest is still drafting.",
         },
       });
+      repo.appendItem(session.id, {
+        method: "turn/completed",
+        params: { mode: "steer" },
+      });
       expect(repo.getSession(session.id)?.last_agent_message).toBe(
         "Previous complete answer.",
       );
@@ -755,9 +759,8 @@ describe("Codexhub API", () => {
         `/api/v1/sessions/${sessionId}/items/latest?type=all`,
       );
       expect(rawLatestAll.item).toMatchObject({
-        type: "agentmessage",
-        codex_method: "item/agentMessage/delta",
-        text_excerpt: " rest is still drafting.",
+        type: "state",
+        codex_method: "turn/completed",
       });
     } finally {
       await seeded.close();

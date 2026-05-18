@@ -1130,6 +1130,7 @@ function formatLatest(value: unknown): string {
     managerMessage &&
     (envelopeType === null ||
       envelopeType === "agentmessage" ||
+      envelopeType === "all" ||
       isAgentMessageItem(itemRecord) ||
       isAgentMessageItem(latestRecord))
   ) {
@@ -1140,6 +1141,14 @@ function formatLatest(value: unknown): string {
     (envelopeType === "agentmessage" || envelopeType === "all") &&
     !managerMessage &&
     (isAgentMessageDelta(itemRecord) || isAgentMessageDelta(latestRecord))
+  ) {
+    return "No agent message.";
+  }
+  if (
+    envelopeType === "all" &&
+    !managerMessage &&
+    !isAgentMessageItem(itemRecord) &&
+    !isAgentMessageItem(latestRecord)
   ) {
     return "No agent message.";
   }

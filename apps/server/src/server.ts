@@ -558,7 +558,7 @@ function latestManagerItem(
   includeSession: boolean,
   type: ItemType | "all",
 ): import("@codexhub/core").Item | null {
-  if (!includeSession || !requiresStableAgentLatest(type, item)) {
+  if (!includeSession || !requiresStableAgentLatest(type)) {
     return item;
   }
 
@@ -573,18 +573,8 @@ function latestManagerItem(
 
 function requiresStableAgentLatest(
   type: ItemType | "all",
-  item: import("@codexhub/core").Item | null,
 ): boolean {
-  return type === "agentmessage" || isAgentMessageDelta(item);
-}
-
-function isAgentMessageDelta(
-  item: import("@codexhub/core").Item | null,
-): boolean {
-  return (
-    item?.type === "agentmessage" &&
-    item.codex_method === "item/agentMessage/delta"
-  );
+  return type === "agentmessage" || type === "all";
 }
 
 function requireSession(repo: HubRepository, reference: string): WorkerSession {

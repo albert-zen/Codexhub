@@ -428,9 +428,9 @@ function App() {
     null,
   );
   const [taskSpec, setTaskSpec] = useState<TaskSpecMetadata | null>(null);
-  const [transcriptEntries, setTranscriptEntries] = useState<
-    TranscriptEntry[]
-  >([]);
+  const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>(
+    [],
+  );
   const [transcriptAfter, setTranscriptAfter] = useState<number | null>(null);
   const [transcriptHistory, setTranscriptHistory] = useState<number[]>([]);
   const [transcriptNextCursor, setTranscriptNextCursor] = useState<
@@ -961,9 +961,7 @@ function App() {
                       className="button button-secondary button-compact"
                       type="button"
                       onClick={() => void handlePreviousTranscript()}
-                      disabled={
-                        loadingDetail || transcriptHistory.length === 0
-                      }
+                      disabled={loadingDetail || transcriptHistory.length === 0}
                     >
                       Previous
                     </button>
@@ -1012,7 +1010,9 @@ function App() {
                           <div className="transcript-meta">
                             <strong>Agent</strong>
                             <span>Entry #{entry.sequence}</span>
-                            <span>{sequenceRangeLabel(entry.item_sequences)}</span>
+                            <span>
+                              {sequenceRangeLabel(entry.item_sequences)}
+                            </span>
                             <time>{formatDate(entry.created_at)}</time>
                           </div>
                           <p>{compactText(entry.text)}</p>
@@ -1039,7 +1039,9 @@ function App() {
                           <strong>
                             {entry.kind === "tool" ? "Tool" : "Debug"}
                           </strong>
-                          <span>{sequenceRangeLabel(entry.item_sequences)}</span>
+                          <span>
+                            {sequenceRangeLabel(entry.item_sequences)}
+                          </span>
                           <span>
                             {entry.codex_method ??
                               entry.codex_item_type ??
@@ -1140,9 +1142,7 @@ function App() {
                         </article>
                       ))}
                       {!loadingDetail && items.length === 0 ? (
-                        <p className="empty">
-                          No raw items match this filter.
-                        </p>
+                        <p className="empty">No raw items match this filter.</p>
                       ) : null}
                     </div>
                   </div>

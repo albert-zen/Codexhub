@@ -963,10 +963,16 @@ describe("codexhub commands", () => {
 
   it("documents unique short prefixes for session references", () => {
     const helpText = "Session ID, unique id prefix, or unique UUID prefix";
-    expect(commandHelp("session", "inspect")).toContain(helpText);
-    expect(commandHelp("session", "follow-up")).toContain(helpText);
-    expect(commandHelp("session", "send")).toContain(helpText);
-    expect(commandHelp("run-group", "add-session")).toContain(helpText);
+    expect(normalizeHelp(commandHelp("session", "inspect"))).toContain(
+      helpText,
+    );
+    expect(normalizeHelp(commandHelp("session", "follow-up"))).toContain(
+      helpText,
+    );
+    expect(normalizeHelp(commandHelp("session", "send"))).toContain(helpText);
+    expect(normalizeHelp(commandHelp("run-group", "add-session"))).toContain(
+      helpText,
+    );
   });
 
   it("keeps trace JSON transcript fields at the top level", async () => {
@@ -1270,6 +1276,10 @@ function commandHelp(groupName: string, commandName: string): string {
   const command = group?.commands.find((entry) => entry.name() === commandName);
   if (!command) throw new Error(`${groupName} ${commandName} command missing`);
   return command.helpInformation();
+}
+
+function normalizeHelp(help: string): string {
+  return help.replace(/\s+/g, " ");
 }
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {

@@ -23,6 +23,9 @@ export interface ErrorResponse {
     code: string;
     message: string;
     candidate_ids?: string[] | undefined;
+    session_id?: string | undefined;
+    follow_up_available?: boolean | undefined;
+    follow_up_endpoint?: string | undefined;
   };
 }
 

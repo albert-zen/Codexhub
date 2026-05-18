@@ -40,6 +40,32 @@ Codexhub uses a worker-reviewer loop for substantial implementation tasks.
   changes?
 - Did the worker record reusable experience or friction in the right doc?
 
+## Acceptance Criteria Standard
+
+Acceptance criteria should be checkable by another agent, a test, or a concrete
+manual action.
+
+Good:
+
+- `POST /api/v1/sessions` returns `{ session, workspace }` and persists the
+  initial message.
+- `pnpm --filter @codexhub/server test` passes.
+- `GET /api/v1/sessions/:id/items?type=agentmessage` defaults to 20 items and
+  returns `next_cursor` when more items exist.
+
+Too vague:
+
+- Improve session startup.
+- Make the UI better.
+- Ensure it works.
+
+Include negative criteria when they protect product boundaries:
+
+- Do not add Linear/GitHub deep binding unless the issue asks for it.
+- Do not replace raw item storage with summaries.
+- Do not introduce validation gates, escalation, or context compiler behavior
+  into first-phase runtime/session work.
+
 ## Worker Response Format
 
 For each review finding:

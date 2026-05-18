@@ -1,0 +1,170 @@
+# Codexhub Worker Control Plane Skill
+
+Use this skill when a manager agent wants to use Codexhub to create, launch,
+observe, continue, and coordinate Codex worker sessions with low context cost.
+
+This is a repo-local skill document. Do not install it into a machine-level
+Codex skills directory unless the user explicitly asks.
+
+## Purpose
+
+Codexhub is a worker scheduler and control plane, not a project manager,
+validation system, escalation system, or context compiler.
+
+Use it to:
+
+- Create or reuse a project.
+- Create a workspace from a local directory, Git clone, or Git worktree.
+- Start a Codex worker session in that workspace.
+- Read recent high-signal output, especially complete agent messages.
+- Page through session history without re-reading already consumed context.
+- Inspect raw or filtered item streams when debugging.
+- Send explicit steer or continue messages.
+- Record useful friction or follow-up work.
+
+## Manager-Agent Workflow
+
+1. Define the task spec outside the worker.
+2. Create or select a Codexhub project.
+3. Create a workspace with an explicit repo/path/cwd/branch.
+4. Start a worker session with the task prompt and task-spec metadata.
+5. Poll or watch bounded output instead of dumping full history.
+6. Use `session result`, `session trace`, or `session latest` for normal status
+   checks.
+7. Use `session items` only when raw item detail is needed.
+8. Send `steer` while the worker is running.
+9. Send `continue` after the worker is awaiting input.
+10. Stop only when the worker should be interrupted.
+
+Always send meaningful message content. Do not use empty continue messages.
+
+## Task Specs
+
+Every non-trivial worker task should include enough specification for the worker
+to act without guessing and for a reviewer to audit the result.
+
+Include:
+
+- Goal: the concrete outcome expected.
+- Intent: why the change matters and which product boundary it protects.
+- Scope: files, packages, APIs, commands, or GUI areas the worker owns.
+- Non-scope: files, modules, or product decisions it must not touch.
+- Requirements: user-visible, API-visible, CLI-visible, persistence, or runtime
+  behavior.
+- Acceptance criteria: observable pass/fail requirements.
+- Validation: exact commands, tests, screenshots, or manual checks.
+- Review focus: what a review agent should inspect most closely.
+
+Workers execute the task spec. They should not rewrite the spec after the fact
+to match the implementation.
+
+## Delegating Workers
+
+Give each worker a full, bounded prompt:
+
+```text
+You are Worker <name> on <workspace/cwd>.
+
+Goal:
+- <single concrete outcome>
+
+Intent:
+- <why this matters>
+
+Scope:
+- You own: <files/directories/responsibility>
+- Do not edit: <files/directories/responsibilities owned by others>
+
+Requirements:
+- <behavioral requirement>
+- <data/API/CLI/UI contract requirement>
+- <compatibility or safety constraint>
+
+Acceptance criteria:
+- <specific observable result>
+- <specific output/API response/test behavior>
+- <no unrelated refactors or metadata churn>
+
+Validation:
+- Run: <command>
+- If a command cannot be run, explain why and what remains unverified.
+
+Handoff:
+- List changed files.
+- Summarize implementation decisions.
+- Report commands run and results.
+- Report risks, assumptions, and follow-up issues.
+```
+
+For parallel work, prefer disjoint workspaces or Git worktrees and disjoint file
+ownership. Tell workers they are not alone in the codebase, must not revert
+others' changes, and must adapt to nearby edits.
+
+## Reading Results
+
+Prefer bounded reads:
+
+```powershell
+codexhub session result <session_id>
+codexhub session trace <session_id> --limit 20
+codexhub session trace <session_id> --after <sequence> --limit 20 --json
+codexhub session latest <session_id>
+codexhub sessions recent --project <project_id_or_name> --limit 10 --json
+```
+
+Use raw item reads for debugging:
+
+```powershell
+codexhub session items <session_id> --type agentmessage --limit 20 --json
+codexhub session items <session_id> --type toolcall --limit 20 --json
+codexhub session items <session_id> --limit 20 --after <sequence> --json
+```
+
+Default to `agentmessage` when the manager only needs high-signal status.
+Request tool calls, tool results, and raw items only when necessary.
+
+## Sending Messages
+
+Use explicit modes:
+
+```powershell
+codexhub session send <session_id> --mode steer --message "Stay within apps/cli and keep JSON output stable."
+codexhub session send <session_id> --mode continue --message "Continue with the next acceptance criterion and report validation results."
+```
+
+Mode expectations:
+
+- `initial`: first prompt persisted at session start.
+- `steer`: mid-turn correction or extra constraint while running.
+- `continue`: explicit next instruction after `awaiting_input`.
+
+Do not rely on the worker to infer intent from an empty message.
+
+## Review Loop
+
+For substantial work:
+
+1. Worker implements from the original task spec.
+2. Worker runs validation.
+3. Manager starts a read-only review worker with the original task spec, changed
+   files, summary, and validation output.
+4. Reviewer checks intent, scope, acceptance criteria, tests, docs, and risks.
+5. Worker responds to each finding as accepted, rejected, or deferred.
+6. Worker reruns relevant validation after accepted fixes.
+
+Record reusable friction, coordination lessons, or follow-up issues in the
+project's docs or issue tracker.
+
+## Product Boundaries
+
+Do not use Codexhub as if it were:
+
+- A validation gate.
+- An escalation hierarchy.
+- A context compiler.
+- A Linear/GitHub replacement.
+- A CI or reviewer-agent replacement.
+- A project management system.
+
+Codexhub can store worker-reported validation output, task metadata, and review
+status, but those are observability records, not quality verdicts.

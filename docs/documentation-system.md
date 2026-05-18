@@ -7,8 +7,8 @@ rediscover them from chat history.
 ## Sources Of Truth
 
 - `README.md`: how to install, run, and use Codexhub.
-- `AGENTS.md`: repo-wide rules for agents, workers, commits, quality gates, and
-  documentation checks.
+- `AGENTS.md`: repo-facing agent README for architecture, package boundaries,
+  Git rules, quality gates, and documentation checks.
 - `docs/roadmap.md`: product direction, phases, current baseline, open work, and
   non-goals.
 - `docs/symphony-lessons.md`: reusable Symphony experience and assumptions that
@@ -22,6 +22,8 @@ rediscover them from chat history.
 - `.github/ISSUE_TEMPLATE/task_spec.yml`: GitHub issue form for task specs.
 - `.github/pull_request_template.md`: PR checklist for task specs, validation,
   and review gate completion.
+- `skills/codexhub/SKILL.md`: repo-local skill for agents using Codexhub as a
+  worker control plane from other projects or tasks.
 
 ## Update Rules
 
@@ -44,8 +46,10 @@ rediscover them from chat history.
 After each worker task, check and report:
 
 - Did the setup or usage surface change? Update `README.md`.
-- Did agent workflow, delegation, review, or quality rules change? Update
+- Did repo-local agent workflow, architecture, or quality rules change? Update
   `AGENTS.md`.
+- Did Codexhub usage, delegation, or large-scale worker-control guidance change?
+  Update `skills/codexhub/SKILL.md`.
 - Did product phase, baseline, or open work change? Update `docs/roadmap.md`.
 - Did the task reveal subagent friction or coordination lessons? Update
   `docs/subagent-ops-log.md`.

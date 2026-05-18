@@ -9,13 +9,21 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { WorkerSessionStatus, Workspace } from "@codexhub/core";
+import type {
+  WorkerSession,
+  WorkerSessionStatus,
+  Workspace,
+} from "@codexhub/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/database.js";
 import { HubRepository } from "../src/repository.js";
 import {
+  SessionProcessUnavailableError,
   codexWorkerEnvironment,
   defaultWorkspaceSandboxPolicy,
+  type CodexRuntimeController,
+  type SendOptions,
+  type StartOptions,
 } from "../src/runtime.js";
 import { createServer } from "../src/server.js";
 
@@ -1896,6 +1904,184 @@ describe("Codexhub API", () => {
     }
   });
 
+  it("preserves transient sessions when a runtime registry proves they are live", async () => {
+    const dbPath = join(tempDir, "supervised-runtime.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "supervised-runtime" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "supervised-runtime-workspace"),
+      cwd: join(tempDir, "supervised-runtime-workspace"),
+    });
+    const liveSession = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(liveSession.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-live",
+      codex_turn_id: "turn-live",
+      codex_session_key: "thread-live-turn-live",
+      process_pid: "supervisor-live",
+    });
+    const orphanSession = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(orphanSession.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-orphan",
+      codex_turn_id: "turn-orphan",
+      codex_session_key: "thread-orphan-turn-orphan",
+      process_pid: "supervisor-orphan",
+    });
+    database.close();
+
+    const liveSessionIds = new Set([liveSession.id]);
+    const restarted = await createServer({
+      dbPath,
+      logger: false,
+      runtimeFactory: (runtimeRepo) =>
+        new RegistryRuntime(runtimeRepo, liveSessionIds),
+    });
+    try {
+      const live = await getFrom(
+        restarted,
+        `/api/v1/sessions/${liveSession.id}`,
+      );
+      expect(live.session).toMatchObject({
+        id: liveSession.id,
+        status: "awaiting_input",
+        process_pid: "supervisor-live",
+        failure_reason: null,
+        ended_at: null,
+      });
+
+      const orphan = await getFrom(
+        restarted,
+        `/api/v1/sessions/${orphanSession.id}`,
+      );
+      expect(orphan.session.status).toBe("failed");
+      expect(orphan.session.failure_reason).toContain("Server restarted");
+      expect(orphan.session.process_pid).toBeNull();
+      expect(orphan.session.ended_at).toEqual(expect.any(String));
+
+      const response = await restarted.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${liveSession.id}/messages`,
+        payload: {
+          mode: "continue",
+          content: "Continue through the supervisor.",
+          sender_type: "manager_agent",
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        message: {
+          session_id: liveSession.id,
+          mode: "continue",
+          status: "sent",
+          codex_request_id: "registry",
+        },
+        session: {
+          id: liveSession.id,
+          status: "running",
+          process_pid: "supervisor-live",
+        },
+      });
+    } finally {
+      await restarted.close();
+    }
+  });
+
+  it("persists unavailable fallback when a live registry loses a session at send time", async () => {
+    const dbPath = join(tempDir, "supervised-send-unavailable.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "supervised-send-unavailable" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "supervised-send-unavailable-workspace"),
+      cwd: join(tempDir, "supervised-send-unavailable-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-live-then-gone",
+      codex_turn_id: "turn-live-then-gone",
+      codex_session_key: "thread-live-then-gone-turn-live-then-gone",
+      process_pid: "supervisor-live-then-gone",
+    });
+    database.close();
+
+    const liveSessionIds = new Set([session.id]);
+    const unavailableOnSendSessionIds = new Set([session.id]);
+    const restarted = await createServer({
+      dbPath,
+      logger: false,
+      runtimeFactory: (runtimeRepo) =>
+        new RegistryRuntime(runtimeRepo, liveSessionIds, {
+          unavailableOnSendSessionIds,
+        }),
+    });
+    try {
+      const preserved = await getFrom(
+        restarted,
+        `/api/v1/sessions/${session.id}`,
+      );
+      expect(preserved.session).toMatchObject({
+        id: session.id,
+        status: "awaiting_input",
+        process_pid: "supervisor-live-then-gone",
+      });
+
+      const response = await restarted.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${session.id}/messages`,
+        payload: {
+          mode: "continue",
+          content: "Continue after supervisor reconnect.",
+          sender_type: "manager_agent",
+        },
+      });
+      const body = response.json();
+      expect(response.statusCode).toBe(409);
+      expect(body.error).toMatchObject({
+        code: "session_process_unavailable",
+        session_id: session.id,
+        follow_up_available: true,
+        follow_up_endpoint: `/api/v1/sessions/${session.id}/follow-up`,
+      });
+
+      const failed = await getFrom(restarted, `/api/v1/sessions/${session.id}`);
+      expect(failed.session.status).toBe("failed");
+      expect(failed.session.failure_reason).toContain(
+        "start a follow-up session",
+      );
+      expect(failed.session.process_pid).toBeNull();
+      expect(failed.session.ended_at).toEqual(expect.any(String));
+
+      const messages = await getFrom(
+        restarted,
+        `/api/v1/sessions/${session.id}/messages`,
+      );
+      expect(messages.messages).toHaveLength(1);
+      expect(messages.messages[0]).toMatchObject({
+        mode: "continue",
+        status: "failed",
+        error: expect.stringContaining("live Codex app-server process"),
+      });
+    } finally {
+      await restarted.close();
+    }
+  });
+
   it.each(["continue", "steer"] as const)(
     "fails a %s send to an awaiting session without a live process",
     async (mode) => {
@@ -1994,6 +2180,63 @@ describe("Codexhub API", () => {
     },
   );
 });
+
+class RegistryRuntime implements CodexRuntimeController {
+  constructor(
+    private readonly repo: HubRepository,
+    private readonly liveSessionIds: Set<string>,
+    private readonly options: {
+      unavailableOnSendSessionIds?: Set<string>;
+    } = {},
+  ) {}
+
+  hasLiveSession(session: WorkerSession): boolean {
+    return this.liveSessionIds.has(session.id);
+  }
+
+  async startSession(
+    session: WorkerSession,
+    _workspace: Workspace,
+    _options: StartOptions,
+  ): Promise<WorkerSession> {
+    return session;
+  }
+
+  async sendMessage(
+    session: WorkerSession,
+    _workspace: Workspace,
+    options: SendOptions,
+  ): Promise<WorkerSession> {
+    if (this.options.unavailableOnSendSessionIds?.has(session.id)) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    if (!this.hasLiveSession(session)) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    this.repo.markMessageSent(options.message.id, "registry");
+    return this.repo.updateSession(session.id, { status: "running" });
+  }
+
+  stopSession(sessionId: string): void {
+    this.liveSessionIds.delete(sessionId);
+    this.repo.updateSession(sessionId, {
+      status: "stopped",
+      ended_at: new Date().toISOString(),
+    });
+  }
+
+  completeSession(sessionId: string): WorkerSession {
+    this.liveSessionIds.delete(sessionId);
+    return this.repo.updateSession(sessionId, {
+      status: "completed",
+      ended_at: new Date().toISOString(),
+    });
+  }
+
+  shutdownAll(): Promise<void> {
+    return Promise.resolve();
+  }
+}
 
 async function post(url: string, payload: unknown): Promise<any> {
   const response = await app.inject({ method: "POST", url, payload });

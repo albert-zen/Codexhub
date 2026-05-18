@@ -13,13 +13,30 @@ import {
 } from "@codexhub/core";
 import type { HubRepository } from "./repository.js";
 
-interface StartOptions {
+export interface StartOptions {
   initialMessage: Message;
   codexOptions?: unknown;
 }
 
-interface SendOptions {
+export interface SendOptions {
   message: Message;
+}
+
+export interface CodexRuntimeController {
+  hasLiveSession(session: WorkerSession): boolean | Promise<boolean>;
+  startSession(
+    session: WorkerSession,
+    workspace: Workspace,
+    options: StartOptions,
+  ): Promise<WorkerSession>;
+  sendMessage(
+    session: WorkerSession,
+    workspace: Workspace,
+    options: SendOptions,
+  ): Promise<WorkerSession>;
+  stopSession(sessionId: string): void;
+  completeSession(sessionId: string): WorkerSession;
+  shutdownAll(): Promise<void>;
 }
 
 interface ManagedSession {
@@ -53,10 +70,15 @@ interface CodexOptions {
 
 const DEFAULT_RESPONSE_TIMEOUT_MS = 30_000;
 
-export class CodexRuntime {
+export class CodexRuntime implements CodexRuntimeController {
   private readonly managed = new Map<string, ManagedSession>();
 
   constructor(private readonly repo: HubRepository) {}
+
+  hasLiveSession(session: WorkerSession): boolean {
+    const managed = this.managed.get(session.id);
+    return managed !== undefined && !managed.stopped && !managed.process.killed;
+  }
 
   async startSession(
     session: WorkerSession,

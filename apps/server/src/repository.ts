@@ -142,6 +142,9 @@ export type SessionResolution =
 
 const SESSION_ID_PREFIX = "sess_";
 const SESSION_RESOLUTION_MATCH_LIMIT = 20;
+const TRANSIENT_SESSION_STATUS_SQL = "'starting', 'running', 'awaiting_input'";
+const UNAVAILABLE_TRANSIENT_FAILURE_REASON =
+  "Server restarted without a live Codex app-server process; session cannot be continued in this server process. Start a follow-up session.";
 
 export class HubRepository {
   constructor(private readonly db: DatabaseSync) {}
@@ -526,6 +529,17 @@ export class HubRepository {
     return row ? sessionFromRow(row) : null;
   }
 
+  listTransientSessions(): WorkerSession[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM worker_sessions
+         WHERE status IN (${TRANSIENT_SESSION_STATUS_SQL})
+         ORDER BY updated_at DESC, created_at DESC`,
+      )
+      .all()
+      .map(sessionFromRow);
+  }
+
   resolveSession(reference: string): SessionResolution {
     const sessionReference = reference.trim();
     const exact = this.getSession(sessionReference);
@@ -563,17 +577,41 @@ export class HubRepository {
   }
 
   reconcileUnavailableTransientSessions(
-    failureReason = "Server restarted without a live Codex app-server process; session cannot be continued in this server process. Start a follow-up session.",
+    failureReason = UNAVAILABLE_TRANSIENT_FAILURE_REASON,
+  ): number {
+    return this.reconcileTransientSessions(failureReason);
+  }
+
+  reconcileUnavailableTransientSessionIds(
+    sessionIds: readonly string[],
+    failureReason = UNAVAILABLE_TRANSIENT_FAILURE_REASON,
+  ): number {
+    const uniqueSessionIds = unique(sessionIds);
+    if (uniqueSessionIds.length === 0) return 0;
+    return this.reconcileTransientSessions(
+      failureReason,
+      `id IN (${placeholders(uniqueSessionIds)})`,
+      uniqueSessionIds,
+    );
+  }
+
+  private reconcileTransientSessions(
+    failureReason: string,
+    extraWhere?: string,
+    extraValues: readonly string[] = [],
   ): number {
     const now = isoNow();
+    const where = [`status IN (${TRANSIENT_SESSION_STATUS_SQL})`, extraWhere]
+      .filter((entry): entry is string => Boolean(entry))
+      .join(" AND ");
     const result = this.db
       .prepare(
         `UPDATE worker_sessions
          SET status = 'failed', failure_reason = ?, process_pid = NULL,
              ended_at = ?, updated_at = ?
-         WHERE status IN ('starting', 'running', 'awaiting_input')`,
+         WHERE ${where}`,
       )
-      .run(failureReason, now, now);
+      .run(failureReason, now, now, ...extraValues);
     return Number(result.changes);
   }
 
@@ -1401,7 +1439,7 @@ function placeholders(values: unknown[]): string {
   return values.map(() => "?").join(", ");
 }
 
-function unique<T>(values: T[]): T[] {
+function unique<T>(values: readonly T[]): T[] {
   return [...new Set(values)];
 }
 

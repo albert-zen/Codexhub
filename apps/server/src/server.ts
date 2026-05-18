@@ -23,19 +23,24 @@ import {
   type UpdateReviewFindingInput,
   type UpdateReviewGateStatusInput,
 } from "./repository.js";
-import { CodexRuntime, SessionProcessUnavailableError } from "./runtime.js";
+import {
+  CodexRuntime,
+  SessionProcessUnavailableError,
+  type CodexRuntimeController,
+} from "./runtime.js";
 import { cleanupWorkspace } from "./workspace-cleanup.js";
 import { buildWorkspace } from "./workspace-builder.js";
 
 export interface CreateServerOptions {
   dbPath?: string;
   logger?: boolean;
+  runtimeFactory?: (repo: HubRepository) => CodexRuntimeController;
 }
 
 interface ServerState {
   database: CodexHubDatabase;
   repo: HubRepository;
-  runtime: CodexRuntime;
+  runtime: CodexRuntimeController;
 }
 
 export async function createServer(options: CreateServerOptions = {}) {
@@ -44,15 +49,9 @@ export async function createServer(options: CreateServerOptions = {}) {
 
   const database = openDatabase({ path: options.dbPath });
   const repo = new HubRepository(database.db);
-  const runtime = new CodexRuntime(repo);
+  const runtime = options.runtimeFactory?.(repo) ?? new CodexRuntime(repo);
   const state: ServerState = { database, repo, runtime };
-  const reconciledSessions = repo.reconcileUnavailableTransientSessions();
-  if (reconciledSessions > 0) {
-    app.log.warn(
-      { reconciledSessions },
-      "reconciled persisted sessions without live runtime processes",
-    );
-  }
+  await reconcileUnavailableRuntimeSessions(app, repo, runtime);
 
   app.setErrorHandler((error, _request, reply) => {
     const err = error instanceof Error ? error : new Error(String(error));
@@ -82,6 +81,37 @@ export async function createServer(options: CreateServerOptions = {}) {
   });
 
   return app;
+}
+
+async function reconcileUnavailableRuntimeSessions(
+  app: FastifyInstance,
+  repo: HubRepository,
+  runtime: CodexRuntimeController,
+): Promise<void> {
+  const unavailableSessionIds: string[] = [];
+  for (const session of repo.listTransientSessions()) {
+    let live = false;
+    try {
+      live = await runtime.hasLiveSession(session);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      app.log.warn(
+        { err, sessionId: session.id },
+        "runtime availability check failed; reconciling session as unavailable",
+      );
+    }
+    if (!live) unavailableSessionIds.push(session.id);
+  }
+
+  const reconciledSessions = repo.reconcileUnavailableTransientSessionIds(
+    unavailableSessionIds,
+  );
+  if (reconciledSessions > 0) {
+    app.log.warn(
+      { reconciledSessions },
+      "reconciled persisted sessions without live runtime processes",
+    );
+  }
 }
 
 function registerApiRoutes(
@@ -487,6 +517,9 @@ function registerApiRoutes(
       });
     } catch (error) {
       if (error instanceof SessionProcessUnavailableError) {
+        persistUnavailableSession(state.repo, error.sessionId, message.id, {
+          failureReason: error.message,
+        });
         throw new HttpError(409, error.code, error.message, {
           session_id: error.sessionId,
           follow_up_available: true,
@@ -646,6 +679,21 @@ function registerApiRoutes(
   app.get(path("/sessions/:id/latest"), async (request) =>
     latestResponse(state, request, true),
   );
+}
+
+function persistUnavailableSession(
+  repo: HubRepository,
+  sessionId: string,
+  messageId: string,
+  options: { failureReason: string },
+): void {
+  repo.markMessageFailed(messageId, options.failureReason);
+  repo.updateSession(sessionId, {
+    status: "failed",
+    failure_reason: options.failureReason,
+    process_pid: null,
+    ended_at: new Date().toISOString(),
+  });
 }
 
 function itemPageResponse(

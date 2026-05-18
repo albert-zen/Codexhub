@@ -727,11 +727,34 @@ describe("Codexhub API", () => {
         text_excerpt: "Previous complete answer.",
       });
 
+      const stableLatestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${sessionId}/latest?type=all`,
+      );
+      expect(stableLatestAll.last_agent_message).toBe(
+        "Previous complete answer.",
+      );
+      expect(stableLatestAll.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/completed",
+        text_excerpt: "Previous complete answer.",
+      });
+
       const rawLatest = await getFrom(
         seeded,
         `/api/v1/sessions/${sessionId}/items/latest?type=agentmessage`,
       );
       expect(rawLatest.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: " rest is still drafting.",
+      });
+
+      const rawLatestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${sessionId}/items/latest?type=all`,
+      );
+      expect(rawLatestAll.item).toMatchObject({
         type: "agentmessage",
         codex_method: "item/agentMessage/delta",
         text_excerpt: " rest is still drafting.",
@@ -833,6 +856,13 @@ describe("Codexhub API", () => {
       expect(stableLatest.last_agent_message).toBeNull();
       expect(stableLatest.item).toBeNull();
 
+      const stableLatestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest?type=all`,
+      );
+      expect(stableLatestAll.last_agent_message).toBeNull();
+      expect(stableLatestAll.item).toBeNull();
+
       const rawLatest = await getFrom(
         seeded,
         `/api/v1/sessions/${session.id}/items/latest?type=agentmessage`,
@@ -845,6 +875,16 @@ describe("Codexhub API", () => {
       expect(rawLatest.item.raw_payload.params.textDelta).toBe(
         "The worktree is clean. The",
       );
+
+      const rawLatestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items/latest?type=all`,
+      );
+      expect(rawLatestAll.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: "The worktree is clean. The",
+      });
     } finally {
       await seeded.close();
     }

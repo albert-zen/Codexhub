@@ -1124,17 +1124,20 @@ function formatLatest(value: unknown): string {
   const managerMessage =
     stringField(envelope, "last_agent_message") ??
     stringField(asRecord(envelope?.session), "last_agent_message");
+  const itemRecord = asRecord(envelope?.item);
+  const latestRecord = asRecord(envelope?.latest);
   if (
     managerMessage &&
-    (envelopeType === null || envelopeType === "agentmessage")
+    (envelopeType === null ||
+      envelopeType === "agentmessage" ||
+      isAgentMessageItem(itemRecord) ||
+      isAgentMessageItem(latestRecord))
   ) {
     return managerMessage;
   }
 
-  const itemRecord = asRecord(envelope?.item);
-  const latestRecord = asRecord(envelope?.latest);
   if (
-    envelopeType === "agentmessage" &&
+    (envelopeType === "agentmessage" || envelopeType === "all") &&
     !managerMessage &&
     (isAgentMessageDelta(itemRecord) || isAgentMessageDelta(latestRecord))
   ) {
@@ -1475,6 +1478,10 @@ function numberArrayField(
 
 function isAgentMessageDelta(record: Record<string, unknown> | null): boolean {
   return stringField(record, "codex_method") === "item/agentMessage/delta";
+}
+
+function isAgentMessageItem(record: Record<string, unknown> | null): boolean {
+  return stringField(record, "type") === "agentmessage";
 }
 
 function oneLine(value: string, maxLength: number): string {

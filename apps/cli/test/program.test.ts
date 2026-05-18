@@ -171,6 +171,42 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toBe("Previous complete answer.");
   });
 
+  it("prints stable latest text for type all when the raw latest is a delta", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse({
+          session_id: "sess_1",
+          type: "all",
+          item: {
+            type: "agentmessage",
+            codex_method: "item/agentMessage/delta",
+            text_excerpt: "The worktree is clean. The",
+          },
+          last_agent_message: "Previous complete answer.",
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "all",
+    ]);
+
+    expect(calls).toEqual(["http://api.test/sessions/sess_1/latest?type=all"]);
+    expect(output.join("").trim()).toBe("Previous complete answer.");
+  });
+
   it("does not print an agent delta when stable latest is empty", async () => {
     const output: string[] = [];
     const program = createProgram({
@@ -196,6 +232,38 @@ describe("codexhub commands", () => {
       "session",
       "latest",
       "sess_1",
+    ]);
+
+    expect(output.join("").trim()).toBe("No agent message.");
+  });
+
+  it("does not print a type all agent delta when stable latest is empty", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "all",
+          item: {
+            type: "agentmessage",
+            codex_method: "item/agentMessage/delta",
+            text_excerpt: "The worktree is clean. The",
+          },
+          last_agent_message: null,
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "all",
     ]);
 
     expect(output.join("").trim()).toBe("No agent message.");

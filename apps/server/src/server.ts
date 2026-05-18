@@ -558,10 +558,7 @@ function latestManagerItem(
   includeSession: boolean,
   type: ItemType | "all",
 ): import("@codexhub/core").Item | null {
-  if (
-    !includeSession ||
-    type !== "agentmessage"
-  ) {
+  if (!includeSession || !requiresStableAgentLatest(type, item)) {
     return item;
   }
 
@@ -572,6 +569,22 @@ function latestManagerItem(
     : item;
   if (!source) return null;
   return { ...source, text_excerpt: session.last_agent_message };
+}
+
+function requiresStableAgentLatest(
+  type: ItemType | "all",
+  item: import("@codexhub/core").Item | null,
+): boolean {
+  return type === "agentmessage" || isAgentMessageDelta(item);
+}
+
+function isAgentMessageDelta(
+  item: import("@codexhub/core").Item | null,
+): boolean {
+  return (
+    item?.type === "agentmessage" &&
+    item.codex_method === "item/agentMessage/delta"
+  );
 }
 
 function requireSession(repo: HubRepository, reference: string): WorkerSession {
@@ -589,7 +602,6 @@ function requireSession(repo: HubRepository, reference: string): WorkerSession {
   }
   if (result.status === "not_found")
     throw new HttpError(404, "session_not_found", "session not found");
-  throw new HttpError(404, "session_not_found", "session not found");
 }
 
 function tryBuildWorkspace(input: Parameters<typeof buildWorkspace>[0]) {

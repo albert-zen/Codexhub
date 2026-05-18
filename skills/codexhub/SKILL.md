@@ -158,9 +158,10 @@ codexhub session latest <session_id>
 codexhub sessions recent --project <project_id_or_name> --limit 10 --json
 ```
 
-`session latest` is the stable completed-agent-message surface. During an
-active turn, inspect `session trace` or raw `session items` for streaming agent
-message deltas instead of treating those deltas as a final latest result.
+`session latest` is the stable completed-agent-message surface, including with
+`--type all`. During an active turn, inspect `session trace` or raw
+`session items` for streaming agent message deltas instead of treating those
+deltas as a final latest result.
 
 Use raw item reads for debugging:
 

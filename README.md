@@ -85,7 +85,8 @@ before changing state.
 `session latest` and session list summaries report the last completed agent
 message. Streaming `item/agentMessage/delta` fragments remain available through
 `session trace` and raw `session items` reads, but they do not replace the stable
-latest message until Codex emits the completed agent message item.
+latest message until Codex emits the completed agent message item, including
+when `session latest --type all` is used.
 
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.

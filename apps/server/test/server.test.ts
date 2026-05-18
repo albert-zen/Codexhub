@@ -653,7 +653,7 @@ describe("Codexhub API", () => {
 
   it("keeps session latest stable while preserving raw agent deltas", async () => {
     const dbPath = join(tempDir, "latest-agentmessage.sqlite");
-    let sessionId = "";
+    let sessionId: string;
 
     {
       const database = openDatabase({ path: dbPath });

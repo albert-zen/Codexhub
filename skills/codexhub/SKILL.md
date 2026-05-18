@@ -130,6 +130,18 @@ worker commits can update objects, refs, and worktree indexes. If a session uses
 a custom sandbox policy, include those metadata roots explicitly before asking a
 worktree worker to commit.
 
+For pnpm workspaces, run `pnpm install` in the source checkout before creating
+worktree workers. When Codexhub sees `pnpm-lock.yaml` in the source checkout, it
+hydrates each created worktree with `pnpm install --offline --frozen-lockfile
+--ignore-scripts`, using the source install's recorded pnpm store when present.
+This creates ignored `node_modules/` entries in the worktree so validation can
+resolve workspace dependencies without network access. If the source checkout is
+not installed or its store is missing, workspace creation should stop with that
+blocker instead of asking workers to debug missing `@types/node`, `vitest`, or
+workspace package links. If pnpm reports a store permission error, rerun
+Codexhub where it can write to the source install's recorded store or reinstall
+the source checkout with a writable store.
+
 ## Reading Results
 
 Prefer bounded reads:

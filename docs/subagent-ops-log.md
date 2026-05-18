@@ -134,6 +134,12 @@ building Codexhub with parallel workers.
   untracked `.pnpm-store/` that polluted `pnpm format` until staged files were
   selected explicitly. Track dependency/cache setup for worker worktrees as
   `#36`.
+- Issue `#36` standardizes pnpm dependency hydration for worktree workers:
+  install dependencies in the source checkout first, then Codexhub runs an
+  offline frozen pnpm install inside each created pnpm worktree using the source
+  install's recorded store. `node_modules/` and `.pnpm-store/` are ignored so
+  generated dependency artifacts stay out of source diffs; missing source
+  dependencies or store paths are documented blockers.
 - Review agents should stop after identifying a known environment blocker and
   complete a static review from the diff. Without explicit steer, reviewers may
   retry Vitest/TypeScript variants even after `spawn EPERM` or missing

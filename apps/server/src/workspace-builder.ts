@@ -8,6 +8,7 @@ import {
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { Project, Workspace } from "@codexhub/core";
+import { hydrateWorktreeDependencies } from "./dependency-hydration.js";
 
 export interface WorkspaceBuildRequest {
   project: Project;
@@ -60,6 +61,10 @@ export function buildWorkspace(input: WorkspaceBuildRequest): BuiltWorkspace {
       repoUrl,
       branch ?? defaultWorktreeBranch(workspacePath),
     );
+    hydrateWorktreeDependencies({
+      sourcePath: repoUrl,
+      workspacePath,
+    });
   } else if (sourceType === "git") {
     if (!repoUrl) throw new Error("repo_url is required for git workspaces");
     prepareGitWorkspace(workspacePath, repoUrl, branch);

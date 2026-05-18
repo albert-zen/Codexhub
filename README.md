@@ -97,6 +97,26 @@ worktree workspaces so workers can commit on their branch. If you provide a
 custom `codex_options.sandboxPolicy`, include both the worktree path and the
 source repo Git metadata root when the worker must commit.
 
+For pnpm workspaces, install dependencies in the source checkout before creating
+worktree workers:
+
+```powershell
+Set-Location D:\desktop\codex-hub
+pnpm install
+```
+
+When the source checkout has `pnpm-lock.yaml`, Codexhub hydrates each created
+worktree by running `pnpm install --offline --frozen-lockfile --ignore-scripts`
+inside the worktree. If the source install records a pnpm store path, Codexhub
+uses that store explicitly so validation can resolve `@types/node`, `vitest`,
+workspace package links, and other dependencies without network access. The
+resulting `node_modules/` and any local `.pnpm-store/` are ignored by default.
+If the source checkout is missing `node_modules/` or its recorded store, workspace
+creation fails with a blocker that tells the operator to rerun `pnpm install` in
+the source checkout. If pnpm reports a store permission error, run Codexhub from
+an environment that can write to the source install's recorded pnpm store or
+rehydrate the source checkout with a writable store.
+
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
 

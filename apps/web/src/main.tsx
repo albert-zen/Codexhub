@@ -6,6 +6,9 @@ import type {
   ItemType,
   MessageMode,
   Project,
+  RunGroup,
+  RunGroupDashboardResponse,
+  RunGroupSessionSummary,
   TaskSpecMetadata,
   TranscriptEntry,
   WorkerSession,
@@ -25,6 +28,11 @@ import {
   validateSessionDraft,
   type SessionDraft,
 } from "./session-forms.js";
+import {
+  attentionLabels,
+  reviewStateLabel,
+  runGroupDashboardCounts,
+} from "./run-group-dashboard.js";
 import {
   RECENT_TRANSCRIPT_CURSOR,
   type TranscriptCursor,
@@ -47,10 +55,19 @@ interface TranscriptPage {
   limit: number;
 }
 
+interface RunGroupDashboardPage {
+  runGroup: RunGroup;
+  summaries: RunGroupSessionSummary[];
+  next_cursor: string | null;
+  limit: number;
+}
+
 interface SessionDetail {
   session: WorkerSession;
   task_spec: TaskSpecMetadata | null;
 }
+
+type DetailMode = "session" | "run_group";
 
 interface LoadDetailOptions {
   transcriptCursor: TranscriptCursor;
@@ -75,6 +92,7 @@ const ITEM_TYPES: Array<ItemType | "all"> = [
 const VISIBLE_TRANSCRIPT_LIMIT = 50;
 const TRANSCRIPT_FETCH_LIMIT = 100;
 const ITEM_PAGE_LIMIT = 50;
+const RUN_GROUP_SESSION_LIMIT = 50;
 
 class ApiError extends Error {
   readonly status: number;
@@ -190,6 +208,31 @@ async function fetchSessions(projectId: ID): Promise<WorkerSession[]> {
     () => request<unknown>(flatPath),
   );
   return listFrom<WorkerSession>(body, "sessions");
+}
+
+async function fetchRunGroups(projectId: ID): Promise<RunGroup[]> {
+  const body = await request<unknown>(
+    `/run-groups${queryString({ project_id: projectId })}`,
+  );
+  return listFrom<RunGroup>(body, "run_groups");
+}
+
+async function fetchRunGroupDashboard(
+  runGroupId: ID,
+  cursor: string | null,
+): Promise<RunGroupDashboardPage> {
+  const body = await request<RunGroupDashboardResponse>(
+    `/run-groups/${encodeURIComponent(runGroupId)}/dashboard${queryString({
+      limit: RUN_GROUP_SESSION_LIMIT,
+      cursor,
+    })}`,
+  );
+  return {
+    runGroup: body.run_group,
+    summaries: body.session_summaries ?? body.items ?? [],
+    next_cursor: body.next_cursor,
+    limit: body.limit,
+  };
 }
 
 async function fetchSession(sessionId: ID): Promise<SessionDetail> {
@@ -360,6 +403,10 @@ function statusClass(status: WorkerSessionStatus): string {
 
 function statusLabel(status: WorkerSessionStatus): string {
   return status.replace("_", " ");
+}
+
+function attentionClass(label: string): string {
+  return `attention-badge attention-${label.toLowerCase().replaceAll(" ", "-")}`;
 }
 
 function workspaceLabel(workspace: Workspace): string {
@@ -688,11 +735,201 @@ function SessionDraftForm({
   );
 }
 
+interface RunGroupDashboardProps {
+  runGroup: RunGroup;
+  summaries: RunGroupSessionSummary[];
+  counts: ReturnType<typeof runGroupDashboardCounts>;
+  loading: boolean;
+  nextCursor: string | null;
+  historyLength: number;
+  onNext: () => Promise<void>;
+  onPrevious: () => Promise<void>;
+  onOpenSession: (sessionId: ID) => void;
+}
+
+function RunGroupDashboard({
+  runGroup,
+  summaries,
+  counts,
+  loading,
+  nextCursor,
+  historyLength,
+  onNext,
+  onPrevious,
+  onOpenSession,
+}: RunGroupDashboardProps) {
+  return (
+    <>
+      <div className="session-context">
+        <section className="run-group-summary-strip" aria-label="Run group">
+          <div className="task-title">
+            <span className="label">Run Group</span>
+            <strong>{runGroup.name}</strong>
+            <p className="run-group-purpose">
+              {compactText(runGroup.purpose, "No purpose recorded.")}
+            </p>
+          </div>
+          <dl className="run-group-metrics">
+            <div>
+              <dt>Shown</dt>
+              <dd>{counts.total}</dd>
+            </div>
+            <div>
+              <dt>Attention</dt>
+              <dd>{counts.attention}</dd>
+            </div>
+            <div>
+              <dt>Failed</dt>
+              <dd>{counts.failed}</dd>
+            </div>
+            <div>
+              <dt>Awaiting</dt>
+              <dd>{counts.awaitingInput}</dd>
+            </div>
+            <div>
+              <dt>Review</dt>
+              <dd>{counts.reviewNeeded}</dd>
+            </div>
+            <div>
+              <dt>Findings</dt>
+              <dd>{counts.openReviewFindings}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+
+      <section
+        className="run-group-dashboard-shell"
+        aria-label="Run group dashboard"
+      >
+        <div className="section-heading conversation-heading">
+          <div>
+            <h3>Batch Dashboard</h3>
+            <p>
+              Showing {summaries.length} session
+              {summaries.length === 1 ? "" : "s"}; page limit{" "}
+              {RUN_GROUP_SESSION_LIMIT}
+            </p>
+          </div>
+          <div className="item-controls">
+            <button
+              className="button button-secondary button-compact"
+              type="button"
+              onClick={() => void onPrevious()}
+              disabled={loading || historyLength === 0}
+            >
+              Previous
+            </button>
+            <button
+              className="button button-secondary button-compact"
+              type="button"
+              onClick={() => void onNext()}
+              disabled={loading || nextCursor === null}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+
+        <div className="run-group-session-list" aria-busy={loading}>
+          {summaries.map((summary) => {
+            const labels = attentionLabels(summary);
+            return (
+              <article
+                className={`run-group-session-card ${summary.attention_required ? "needs-attention" : ""}`}
+                key={summary.session.id}
+              >
+                <div className="run-group-card-topline">
+                  <div>
+                    <strong>{shortId(summary.session.id)}</strong>
+                    <span className={statusClass(summary.session.status)}>
+                      {statusLabel(summary.session.status)}
+                    </span>
+                  </div>
+                  <div className="attention-list">
+                    {labels.length > 0 ? (
+                      labels.map((label) => (
+                        <span className={attentionClass(label)} key={label}>
+                          {label}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="attention-badge attention-clear">
+                        Clear
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <p className="run-group-latest">
+                  {compactText(summary.session.last_agent_message)}
+                </p>
+                <dl className="run-group-session-meta">
+                  <div>
+                    <dt>Review</dt>
+                    <dd>{reviewStateLabel(summary)}</dd>
+                  </div>
+                  <div>
+                    <dt>Findings</dt>
+                    <dd>
+                      {summary.open_review_finding_count}/
+                      {summary.review_finding_count}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Items</dt>
+                    <dd>{summary.session.last_item_sequence}</dd>
+                  </div>
+                  <div>
+                    <dt>Updated</dt>
+                    <dd>{formatDate(summary.session.updated_at)}</dd>
+                  </div>
+                </dl>
+                {summary.session.failure_reason ? (
+                  <p className="run-group-failure">
+                    {summary.session.failure_reason}
+                  </p>
+                ) : null}
+                <div className="action-row run-group-card-actions">
+                  <button
+                    className="button button-secondary button-compact"
+                    type="button"
+                    onClick={() => onOpenSession(summary.session.id)}
+                  >
+                    Open Session
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {!loading && summaries.length === 0 ? (
+            <p className="empty">No sessions in this run group page.</p>
+          ) : null}
+        </div>
+      </section>
+    </>
+  );
+}
+
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<ID | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [sessions, setSessions] = useState<WorkerSession[]>([]);
+  const [runGroups, setRunGroups] = useState<RunGroup[]>([]);
+  const [selectedRunGroupId, setSelectedRunGroupId] = useState<ID | null>(null);
+  const [runGroupSummaries, setRunGroupSummaries] = useState<
+    RunGroupSessionSummary[]
+  >([]);
+  const [runGroupCursor, setRunGroupCursor] = useState<string | null>(null);
+  const [runGroupHistory, setRunGroupHistory] = useState<Array<string | null>>(
+    [],
+  );
+  const [runGroupNextCursor, setRunGroupNextCursor] = useState<string | null>(
+    null,
+  );
+  const [runGroupDetail, setRunGroupDetail] =
+    useState<RunGroupDashboardPage | null>(null);
+  const [activeDetail, setActiveDetail] = useState<DetailMode>("session");
   const [selectedSessionId, setSelectedSessionId] = useState<ID | null>(null);
   const [selectedSession, setSelectedSession] = useState<WorkerSession | null>(
     null,
@@ -726,6 +963,8 @@ function App() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [loadingRunGroups, setLoadingRunGroups] = useState(false);
+  const [loadingRunGroupDetail, setLoadingRunGroupDetail] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState<SessionAction | null>(null);
   const [submittingStart, setSubmittingStart] = useState(false);
@@ -769,6 +1008,17 @@ function App() {
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
+  );
+  const selectedRunGroup = useMemo(
+    () =>
+      runGroupDetail?.runGroup ??
+      runGroups.find((runGroup) => runGroup.id === selectedRunGroupId) ??
+      null,
+    [runGroupDetail, runGroups, selectedRunGroupId],
+  );
+  const runGroupCounts = useMemo(
+    () => runGroupDashboardCounts(runGroupSummaries),
+    [runGroupSummaries],
   );
 
   const conversationTranscriptEntries = useMemo(
@@ -852,6 +1102,54 @@ function App() {
     }
   }, []);
 
+  const loadRunGroups = useCallback(async (projectId: ID) => {
+    setLoadingRunGroups(true);
+    setError(null);
+    try {
+      const nextRunGroups = await fetchRunGroups(projectId);
+      setRunGroups(nextRunGroups);
+      setSelectedRunGroupId((current) => {
+        if (
+          current &&
+          nextRunGroups.some((runGroup) => runGroup.id === current)
+        ) {
+          return current;
+        }
+        return nextRunGroups[0]?.id ?? null;
+      });
+    } catch (loadError) {
+      setRunGroups([]);
+      setSelectedRunGroupId(null);
+      setRunGroupDetail(null);
+      setRunGroupSummaries([]);
+      setRunGroupNextCursor(null);
+      setError(`Run groups: ${getErrorMessage(loadError)}`);
+    } finally {
+      setLoadingRunGroups(false);
+    }
+  }, []);
+
+  const loadRunGroupDetail = useCallback(
+    async (runGroupId: ID, cursor: string | null) => {
+      setLoadingRunGroupDetail(true);
+      setError(null);
+      try {
+        const nextDetail = await fetchRunGroupDashboard(runGroupId, cursor);
+        setRunGroupDetail(nextDetail);
+        setRunGroupSummaries(nextDetail.summaries);
+        setRunGroupNextCursor(nextDetail.next_cursor);
+      } catch (loadError) {
+        setRunGroupDetail(null);
+        setRunGroupSummaries([]);
+        setRunGroupNextCursor(null);
+        setError(`Run group detail: ${getErrorMessage(loadError)}`);
+      } finally {
+        setLoadingRunGroupDetail(false);
+      }
+    },
+    [],
+  );
+
   const loadDetail = useCallback(
     async (sessionId: ID, options: LoadDetailOptions) => {
       setLoadingDetail(true);
@@ -888,7 +1186,12 @@ function App() {
   );
 
   const refreshCurrent = useCallback(async () => {
-    if (selectedProjectId) await loadSessions(selectedProjectId);
+    if (selectedProjectId) {
+      await Promise.all([
+        loadSessions(selectedProjectId),
+        loadRunGroups(selectedProjectId),
+      ]);
+    }
     if (selectedSessionId)
       await loadDetail(selectedSessionId, {
         transcriptCursor,
@@ -896,12 +1199,18 @@ function App() {
         rawItemAfter: itemAfter,
         includeRawItems: showRawItems,
       });
+    if (selectedRunGroupId)
+      await loadRunGroupDetail(selectedRunGroupId, runGroupCursor);
   }, [
     itemAfter,
     itemType,
     loadDetail,
+    loadRunGroupDetail,
+    loadRunGroups,
     loadSessions,
+    runGroupCursor,
     selectedProjectId,
+    selectedRunGroupId,
     selectedSessionId,
     showRawItems,
     transcriptCursor,
@@ -915,14 +1224,23 @@ function App() {
     if (!selectedProjectId) {
       setWorkspaces([]);
       setSessions([]);
+      setRunGroups([]);
       setSelectedSessionId(null);
+      setSelectedRunGroupId(null);
+      setRunGroupDetail(null);
+      setRunGroupSummaries([]);
+      setRunGroupCursor(null);
+      setRunGroupHistory([]);
+      setRunGroupNextCursor(null);
+      setActiveDetail("session");
       setCreateDraft((current) => ({ ...current, workspaceId: "" }));
       setFollowUpDraft((current) => ({ ...current, workspaceId: "" }));
       return;
     }
     void loadWorkspaces(selectedProjectId);
     void loadSessions(selectedProjectId);
-  }, [loadSessions, loadWorkspaces, selectedProjectId]);
+    void loadRunGroups(selectedProjectId);
+  }, [loadRunGroups, loadSessions, loadWorkspaces, selectedProjectId]);
 
   useEffect(() => {
     setFollowUpDraft((current) => ({
@@ -960,6 +1278,20 @@ function App() {
       includeRawItems: showRawItems,
     });
   }, [itemType, loadDetail, selectedSessionId, showRawItems]);
+
+  useEffect(() => {
+    if (!selectedRunGroupId) {
+      setRunGroupDetail(null);
+      setRunGroupSummaries([]);
+      setRunGroupCursor(null);
+      setRunGroupHistory([]);
+      setRunGroupNextCursor(null);
+      return;
+    }
+    setRunGroupCursor(null);
+    setRunGroupHistory([]);
+    void loadRunGroupDetail(selectedRunGroupId, null);
+  }, [loadRunGroupDetail, selectedRunGroupId]);
 
   useEffect(() => {
     setFollowUpDraft(
@@ -1029,6 +1361,7 @@ function App() {
       setCreateDraft(createEmptySessionDraft(createDraft.workspaceId));
       await loadSessions(selectedProjectId);
       setSelectedSessionId(nextSession.id);
+      setActiveDetail("session");
     } catch (startError) {
       setCreateSessionError(
         `Start session failed: ${getErrorMessage(startError)}`,
@@ -1051,6 +1384,7 @@ function App() {
       setFollowUpDraft(createEmptySessionDraft(followUpDraft.workspaceId));
       if (selectedProjectId) await loadSessions(selectedProjectId);
       setSelectedSessionId(nextSession.id);
+      setActiveDetail("session");
     } catch (startError) {
       setFollowUpError(
         `Start follow-up failed: ${getErrorMessage(startError)}`,
@@ -1058,6 +1392,23 @@ function App() {
     } finally {
       setSubmittingFollowUp(false);
     }
+  }
+
+  async function handleNextRunGroupSessions() {
+    if (!selectedRunGroupId || runGroupNextCursor === null) return;
+    const nextCursor = runGroupNextCursor;
+    setRunGroupHistory((current) => [...current, runGroupCursor]);
+    setRunGroupCursor(nextCursor);
+    await loadRunGroupDetail(selectedRunGroupId, nextCursor);
+  }
+
+  async function handlePreviousRunGroupSessions() {
+    if (!selectedRunGroupId || runGroupHistory.length === 0) return;
+    const previousHistory = runGroupHistory.slice(0, -1);
+    const previousCursor = runGroupHistory[runGroupHistory.length - 1] ?? null;
+    setRunGroupHistory(previousHistory);
+    setRunGroupCursor(previousCursor);
+    await loadRunGroupDetail(selectedRunGroupId, previousCursor);
   }
 
   async function handleNextTranscript() {
@@ -1179,6 +1530,33 @@ function App() {
             </div>
             <span>{loadingSessions ? "Loading" : sessions.length}</span>
           </div>
+          <section className="run-group-block" aria-label="Run groups">
+            <div className="section-heading compact-heading">
+              <h3>Run Groups</h3>
+              <span>{loadingRunGroups ? "Loading" : runGroups.length}</span>
+            </div>
+            <div className="run-group-list">
+              {runGroups.map((runGroup) => (
+                <button
+                  className={`run-group-chip ${runGroup.id === selectedRunGroupId && activeDetail === "run_group" ? "is-active" : ""}`}
+                  key={runGroup.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedRunGroupId(runGroup.id);
+                    setActiveDetail("run_group");
+                  }}
+                >
+                  <strong>{runGroup.name}</strong>
+                  <span>{runGroup.purpose ?? shortId(runGroup.id)}</span>
+                </button>
+              ))}
+              {!loadingRunGroups &&
+              selectedProjectId &&
+              runGroups.length === 0 ? (
+                <p className="empty compact-empty">No run groups.</p>
+              ) : null}
+            </div>
+          </section>
           <section className="start-session-block" aria-label="Start session">
             <div className="section-heading compact-heading">
               <h3>Start Session</h3>
@@ -1211,7 +1589,10 @@ function App() {
                 className={`list-row session-row ${session.id === selectedSessionId ? "is-active" : ""}`}
                 key={session.id}
                 type="button"
-                onClick={() => setSelectedSessionId(session.id)}
+                onClick={() => {
+                  setSelectedSessionId(session.id);
+                  setActiveDetail("session");
+                }}
               >
                 <span className="row-topline">
                   <strong>{shortId(session.id)}</strong>
@@ -1231,24 +1612,58 @@ function App() {
           </div>
         </aside>
 
-        <section className="panel detail-panel" aria-label="Session detail">
+        <section
+          className="panel detail-panel"
+          aria-label={
+            activeDetail === "run_group" ? "Run group detail" : "Session detail"
+          }
+        >
           <div className="panel-heading detail-heading">
             <div>
-              <h2>Session Detail</h2>
+              <h2>
+                {activeDetail === "run_group" ? "Run Group" : "Session Detail"}
+              </h2>
               <p>
-                {selectedSession
-                  ? shortId(selectedSession.id)
-                  : "Select a session"}
+                {activeDetail === "run_group"
+                  ? (selectedRunGroup?.name ?? "Select a run group")
+                  : selectedSession
+                    ? shortId(selectedSession.id)
+                    : "Select a session"}
               </p>
             </div>
-            {selectedSession ? (
+            {activeDetail === "run_group" && selectedRunGroup ? (
+              <span className="dashboard-pill">
+                {loadingRunGroupDetail
+                  ? "Loading"
+                  : `${runGroupCounts.attention} attention`}
+              </span>
+            ) : selectedSession ? (
               <span className={statusClass(selectedSession.status)}>
                 {selectedSession.status.replace("_", " ")}
               </span>
             ) : null}
           </div>
 
-          {selectedSession ? (
+          {activeDetail === "run_group" ? (
+            selectedRunGroup ? (
+              <RunGroupDashboard
+                runGroup={selectedRunGroup}
+                summaries={runGroupSummaries}
+                counts={runGroupCounts}
+                loading={loadingRunGroupDetail}
+                nextCursor={runGroupNextCursor}
+                historyLength={runGroupHistory.length}
+                onNext={handleNextRunGroupSessions}
+                onPrevious={handlePreviousRunGroupSessions}
+                onOpenSession={(sessionId) => {
+                  setSelectedSessionId(sessionId);
+                  setActiveDetail("session");
+                }}
+              />
+            ) : (
+              <p className="empty detail-empty">No run group selected.</p>
+            )
+          ) : selectedSession ? (
             <>
               <div className="session-context">
                 <section className="task-spec-strip" aria-label="Task spec">

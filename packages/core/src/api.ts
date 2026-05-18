@@ -10,6 +10,7 @@ import type {
   ReviewFindingStatus,
   ReviewGateStatus,
   RunGroup,
+  RunGroupSessionSummary,
   SenderType,
   TaskSpecMetadata,
   TranscriptEntry,
@@ -166,6 +167,11 @@ export interface RunGroupResponse {
 
 export interface RunGroupListResponse extends Page<RunGroup> {
   run_groups: RunGroup[];
+}
+
+export interface RunGroupDashboardResponse extends Page<RunGroupSessionSummary> {
+  run_group: RunGroup;
+  session_summaries: RunGroupSessionSummary[];
 }
 
 export interface WorkspaceResponse {

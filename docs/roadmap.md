@@ -15,7 +15,7 @@ loop after the first orchestration metadata pass. Worktree workspaces, task spec
 metadata, run groups, review-gate status, terminal-session follow-up, and
 structured review findings now exist as first-pass control plane records. The
 next gaps are clearer web actions, compact GUI creation/follow-up flows, and
-batch dashboards.
+continued batch-supervision polish.
 
 ## V1 Outcome
 
@@ -47,7 +47,8 @@ The repository currently contains:
   ids.
 - `apps/web` with a compact project/session/detail UI, readable transcript,
   item type filter, latest agent message, send steer/continue, stop, and
-  complete actions.
+  complete actions, plus a read-only run group dashboard for batch progress,
+  latest messages, review state, and attention indicators.
 - Terminal sessions can start fresh follow-up worker sessions through API and
   CLI without reviving stopped, completed, or failed Codex processes.
 - Docs for Symphony lessons, subagent operations, roadmap, task specs,
@@ -72,8 +73,6 @@ The following work remains open next:
 - Keep roadmap and local issue docs synchronized with the closed baseline and
   next backlog (`#22`).
 - Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
-- Add a run group dashboard for worker progress, latest messages, review state,
-  and attention indicators (`#26`).
 - Continue tuning the dogfood smoke output as real runs reveal new friction.
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
@@ -337,6 +336,8 @@ Implemented:
   parallel workers.
 - Minimal run groups can associate related WorkerSessions without becoming a
   project management system.
+- Run group dashboards show bounded session summaries, latest messages, review
+  state, failed/attention indicators, and open review-finding counts.
 - Review-gate status metadata can track implementation, self-validation, review,
   and human-review readiness as worker-reported state.
 
@@ -344,8 +345,6 @@ Remaining:
 
 - Track package/file ownership per WorkerSession to reduce conflicts during
   parallel work.
-- Add a run group dashboard for sessions, statuses, latest messages, review
-  state, blocked/failed indicators, and attention needs (`#26`).
 - Keep batch supervision bounded and read-oriented; do not add scheduling
   policy, project management, validation gates, or CI coupling.
 

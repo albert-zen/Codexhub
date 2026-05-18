@@ -26,6 +26,11 @@ export type ReviewGateStatusFlag =
   | "ready_for_human_review";
 export type ReviewFindingSeverity = "info" | "low" | "medium" | "high";
 export type ReviewFindingStatus = "open" | "accepted" | "rejected" | "deferred";
+export type RunGroupAttentionReason =
+  | "failed"
+  | "awaiting_input"
+  | "review_needed"
+  | "open_review_findings";
 
 export type ItemType =
   | "agentmessage"
@@ -189,6 +194,15 @@ export interface ReviewFinding {
   worker_response: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RunGroupSessionSummary {
+  session: WorkerSession;
+  review_status: ReviewGateStatus;
+  review_finding_count: number;
+  open_review_finding_count: number;
+  attention_required: boolean;
+  attention_reasons: RunGroupAttentionReason[];
 }
 
 export interface Page<T> {

@@ -11,6 +11,7 @@ import {
   type ReviewFindingStatus,
   type ReviewGateStatus,
   type RunGroup,
+  type RunGroupSessionSummary,
   type SenderType,
   type TaskSpecMetadata,
   type TranscriptEntry,
@@ -95,6 +96,11 @@ export interface UpdateReviewFindingInput {
 }
 
 export interface ReviewFindingListOptions {
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface RunGroupSessionListOptions {
   limit?: number;
   cursor?: string | null;
 }
@@ -251,19 +257,88 @@ export class HubRepository {
       .run(isoNow(), runGroupId);
   }
 
-  listRunGroupSessions(runGroupId: string): WorkerSession[] {
+  listRunGroupSessions(
+    runGroupId: string,
+    options: RunGroupSessionListOptions = {},
+  ): {
+    items: WorkerSession[];
+    next_cursor: string | null;
+    limit: number;
+  } {
     this.requireRunGroup(runGroupId);
-    return this.db
+    const limit = clampLimit(options.limit, 20, 100);
+    const offset = parseCursor(options.cursor);
+    const rows = this.db
       .prepare(
         `SELECT worker_sessions.*
          FROM worker_sessions
          INNER JOIN run_group_sessions
            ON worker_sessions.id = run_group_sessions.session_id
          WHERE run_group_sessions.run_group_id = ?
-         ORDER BY run_group_sessions.created_at ASC`,
+         ORDER BY run_group_sessions.created_at ASC, run_group_sessions.rowid ASC
+         LIMIT ? OFFSET ?`,
       )
-      .all(runGroupId)
+      .all(runGroupId, limit + 1, offset)
       .map(sessionFromRow);
+    const items = rows.slice(0, limit);
+    return {
+      items,
+      limit,
+      next_cursor: rows.length > limit ? String(offset + limit) : null,
+    };
+  }
+
+  listRunGroupSessionSummaries(
+    runGroupId: string,
+    options: RunGroupSessionListOptions = {},
+  ): {
+    items: RunGroupSessionSummary[];
+    next_cursor: string | null;
+    limit: number;
+  } {
+    this.requireRunGroup(runGroupId);
+    const limit = clampLimit(options.limit, 20, 100);
+    const offset = parseCursor(options.cursor);
+    const rows = this.db
+      .prepare(
+        `SELECT
+           worker_sessions.*,
+           review_gate_statuses.session_id AS review_status_session_id,
+           review_gate_statuses.implementation_done AS review_implementation_done,
+           review_gate_statuses.self_validation_done AS review_self_validation_done,
+           review_gate_statuses.review_requested AS review_requested,
+           review_gate_statuses.review_addressed AS review_addressed,
+           review_gate_statuses.ready_for_human_review AS review_ready_for_human_review,
+           review_gate_statuses.note AS review_note,
+           review_gate_statuses.created_at AS review_created_at,
+           review_gate_statuses.updated_at AS review_updated_at,
+           COALESCE(review_counts.review_finding_count, 0) AS review_finding_count,
+           COALESCE(review_counts.open_review_finding_count, 0) AS open_review_finding_count
+         FROM run_group_sessions
+         INNER JOIN worker_sessions
+           ON worker_sessions.id = run_group_sessions.session_id
+         LEFT JOIN review_gate_statuses
+           ON review_gate_statuses.session_id = worker_sessions.id
+         LEFT JOIN (
+           SELECT
+             session_id,
+             COUNT(*) AS review_finding_count,
+             SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_review_finding_count
+           FROM review_findings
+           GROUP BY session_id
+         ) review_counts
+           ON review_counts.session_id = worker_sessions.id
+         WHERE run_group_sessions.run_group_id = ?
+         ORDER BY run_group_sessions.created_at ASC, run_group_sessions.rowid ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(runGroupId, limit + 1, offset);
+    const items = rows.slice(0, limit).map(runGroupSessionSummaryFromRow);
+    return {
+      items,
+      limit,
+      next_cursor: rows.length > limit ? String(offset + limit) : null,
+    };
   }
 
   createWorkspace(input: CreateWorkspaceInput): Workspace {
@@ -1496,6 +1571,85 @@ function reviewGateStatusFromRow(row: unknown): ReviewGateStatus {
   };
 }
 
+function runGroupSessionSummaryFromRow(row: unknown): RunGroupSessionSummary {
+  const session = sessionFromRow(row);
+  const reviewStatus = reviewGateStatusFromSummaryRow(row, session);
+  const reviewFindingCount = number(asRow(row), "review_finding_count");
+  const openReviewFindingCount = number(
+    asRow(row),
+    "open_review_finding_count",
+  );
+  const attentionReasons = runGroupAttentionReasons(
+    session,
+    reviewStatus,
+    openReviewFindingCount,
+  );
+  return {
+    session,
+    review_status: reviewStatus,
+    review_finding_count: reviewFindingCount,
+    open_review_finding_count: openReviewFindingCount,
+    attention_required: attentionReasons.length > 0,
+    attention_reasons: attentionReasons,
+  };
+}
+
+function reviewGateStatusFromSummaryRow(
+  row: unknown,
+  session: WorkerSession,
+): ReviewGateStatus {
+  const record = asRow(row);
+  if (typeof record.review_status_session_id !== "string") {
+    return {
+      session_id: session.id,
+      implementation_done: false,
+      self_validation_done: false,
+      review_requested: false,
+      review_addressed: false,
+      ready_for_human_review: false,
+      note: null,
+      created_at: session.created_at,
+      updated_at: session.updated_at,
+    };
+  }
+
+  return {
+    session_id: requiredString(record, "review_status_session_id"),
+    implementation_done: prefixedBoolean(record, "review_implementation_done"),
+    self_validation_done: prefixedBoolean(
+      record,
+      "review_self_validation_done",
+    ),
+    review_requested: prefixedBoolean(record, "review_requested"),
+    review_addressed: prefixedBoolean(record, "review_addressed"),
+    ready_for_human_review: prefixedBoolean(
+      record,
+      "review_ready_for_human_review",
+    ),
+    note: string(record, "review_note"),
+    created_at: requiredString(record, "review_created_at"),
+    updated_at: requiredString(record, "review_updated_at"),
+  };
+}
+
+function runGroupAttentionReasons(
+  session: WorkerSession,
+  reviewStatus: ReviewGateStatus,
+  openReviewFindingCount: number,
+): RunGroupSessionSummary["attention_reasons"] {
+  const reasons: RunGroupSessionSummary["attention_reasons"] = [];
+  if (session.status === "failed") reasons.push("failed");
+  if (session.status === "awaiting_input") reasons.push("awaiting_input");
+  if (
+    (reviewStatus.review_requested || reviewStatus.ready_for_human_review) &&
+    !reviewStatus.review_addressed
+  ) {
+    reasons.push("review_needed");
+  }
+  if (openReviewFindingCount > 0) reasons.push("open_review_findings");
+  return reasons;
+}
+
 function reviewFindingFromRow(row: unknown): ReviewFinding {
   const record = asRow(row);
   return {
@@ -1536,5 +1690,9 @@ function number(row: Record<string, unknown>, key: string): number {
 }
 
 function boolean(row: Record<string, unknown>, key: string): boolean {
+  return number(row, key) === 1;
+}
+
+function prefixedBoolean(row: Record<string, unknown>, key: string): boolean {
   return number(row, key) === 1;
 }

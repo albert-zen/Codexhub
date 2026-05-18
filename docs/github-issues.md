@@ -42,13 +42,15 @@ Closed implementation areas:
 - Review-gate status metadata as observability, not validation (`#18`).
 - Terminal-session follow-up through API and CLI without reviving stopped,
   completed, or failed Codex processes (`#23`).
+- Run group dashboard for bounded batch progress, latest messages, review state,
+  and attention indicators (`#26`).
 - CI-safe fake dogfood smoke script with explicit real Codex opt-in (`#27`).
 
 The important boundary after these closures: Codexhub has first-pass metadata
 for task specs, worktrees, run groups, review status, terminal-session
-follow-up, and fake-mode dogfood automation. It does not yet have the full
-orchestration UX around web creation/follow-up flows, ownership conflict
-display, or run group dashboards.
+follow-up, run group dashboards, and fake-mode dogfood automation. It does not
+yet have the full orchestration UX around web creation/follow-up flows or
+ownership conflict display.
 
 ## Backlog Guardrails
 
@@ -63,7 +65,7 @@ display, or run group dashboards.
 
 ## Next Backlog
 
-The remaining GitHub issue wave is `#19` through `#26`. GitHub remains the
+The remaining GitHub issue wave is `#19` through `#25`. GitHub remains the
 execution source of truth for issue state; this section keeps the local
 manager-agent reading path aligned with that tracker.
 
@@ -93,10 +95,6 @@ manager-agent reading path aligned with that tracker.
      responses as observability records.
    - Can run after `#19`; keep migrations separate from the implemented
      session follow-up relation.
-7. `#26 feat(run-groups): show batch dashboard with worker progress`
-   - Show run group sessions, statuses, latest messages, review state, and
-     blocked/failed attention indicators through bounded API/web reads.
-   - Depends on `#25`.
 
 ## Later Closed Follow-Ups
 

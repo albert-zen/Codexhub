@@ -305,6 +305,155 @@ describe("Codexhub API", () => {
     expect(invalidStatus.json().error.code).toBe("invalid_review_finding");
   });
 
+  it("returns bounded run group dashboard summaries with review and attention state", async () => {
+    const dbPath = join(tempDir, "run-group-dashboard.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "run-group-dashboard-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "run-group-dashboard-workspace"),
+      cwd: join(tempDir, "run-group-dashboard-workspace"),
+    });
+    const runGroup = repo.createRunGroup({
+      name: "dashboard-batch",
+      project_id: project.id,
+      purpose: "Watch worker progress.",
+    });
+
+    function createDashboardSession(
+      status: WorkerSessionStatus,
+      message: string,
+    ) {
+      const session = repo.createSession({
+        project_id: project.id,
+        workspace_id: workspace.id,
+      });
+      repo.appendItem(session.id, {
+        method: "item/completed",
+        params: {
+          item: {
+            id: `agent_${status}_${session.id}`,
+            type: "agentMessage",
+            text: message,
+          },
+        },
+      });
+      repo.updateSession(session.id, {
+        status,
+        failure_reason: status === "failed" ? "worker process exited" : null,
+        ended_at:
+          status === "completed" || status === "failed"
+            ? new Date().toISOString()
+            : null,
+      });
+      repo.addSessionToRunGroup(runGroup.id, session.id);
+      return session;
+    }
+
+    const awaiting = createDashboardSession(
+      "awaiting_input",
+      "Need manager input on package boundaries.",
+    );
+    const review = createDashboardSession(
+      "completed",
+      "Implementation complete and ready for review.",
+    );
+    const failed = createDashboardSession(
+      "failed",
+      "Failed before validation.",
+    );
+    repo.updateReviewGateStatus(review.id, {
+      implementation_done: true,
+      self_validation_done: true,
+      review_requested: true,
+      ready_for_human_review: true,
+    });
+    repo.createReviewFinding({
+      session_id: review.id,
+      reviewer_session_id: awaiting.id,
+      severity: "high",
+      summary: "Open finding should be visible in the dashboard.",
+    });
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const firstPage = await getFrom(
+        seeded,
+        `/api/v1/run-groups/${runGroup.id}/dashboard?limit=2`,
+      );
+      expect(firstPage.run_group).toMatchObject({
+        id: runGroup.id,
+        name: "dashboard-batch",
+      });
+      expect(firstPage.session_summaries).toHaveLength(2);
+      expect(firstPage.items).toEqual(firstPage.session_summaries);
+      expect(firstPage.next_cursor).toBe("2");
+
+      expect(firstPage.session_summaries[0]).toMatchObject({
+        session: {
+          id: awaiting.id,
+          status: "awaiting_input",
+          last_agent_message: "Need manager input on package boundaries.",
+        },
+        review_status: {
+          implementation_done: false,
+          review_requested: false,
+        },
+        review_finding_count: 0,
+        open_review_finding_count: 0,
+        attention_required: true,
+        attention_reasons: ["awaiting_input"],
+      });
+      expect(firstPage.session_summaries[1]).toMatchObject({
+        session: {
+          id: review.id,
+          status: "completed",
+          last_agent_message: "Implementation complete and ready for review.",
+        },
+        review_status: {
+          implementation_done: true,
+          self_validation_done: true,
+          review_requested: true,
+          ready_for_human_review: true,
+          review_addressed: false,
+        },
+        review_finding_count: 1,
+        open_review_finding_count: 1,
+        attention_required: true,
+        attention_reasons: ["review_needed", "open_review_findings"],
+      });
+
+      const secondPage = await getFrom(
+        seeded,
+        `/api/v1/run-groups/${runGroup.id}/dashboard?limit=2&cursor=${firstPage.next_cursor}`,
+      );
+      expect(secondPage.session_summaries).toHaveLength(1);
+      expect(secondPage.next_cursor).toBeNull();
+      expect(secondPage.session_summaries[0]).toMatchObject({
+        session: {
+          id: failed.id,
+          status: "failed",
+          failure_reason: "worker process exited",
+          last_agent_message: "Failed before validation.",
+        },
+        attention_required: true,
+        attention_reasons: ["failed"],
+      });
+
+      const sessionsPage = await getFrom(
+        seeded,
+        `/api/v1/run-groups/${runGroup.id}/sessions?limit=2`,
+      );
+      expect(sessionsPage.sessions).toHaveLength(2);
+      expect(sessionsPage.next_cursor).toBe("2");
+    } finally {
+      await seeded.close();
+    }
+  });
+
   it("returns not found for missing uuid-only session prefixes", async () => {
     const response = await app.inject({
       method: "GET",

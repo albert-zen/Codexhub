@@ -18,6 +18,7 @@ import {
   type CreateTaskSpecInput,
   type ItemPageOptions,
   type ReviewFindingListOptions,
+  type RunGroupSessionListOptions,
   type SessionListOptions,
   type UpdateReviewFindingInput,
   type UpdateReviewGateStatusInput,
@@ -159,6 +160,22 @@ function registerApiRoutes(
     return { run_group: runGroup };
   });
 
+  app.get(path("/run-groups/:id/dashboard"), async (request) => {
+    const id = requiredString(asRecord(request.params), "id");
+    const runGroup = state.repo.getRunGroup(id);
+    if (!runGroup)
+      throw new HttpError(404, "run_group_not_found", "run group not found");
+    const page = state.repo.listRunGroupSessionSummaries(
+      id,
+      runGroupSessionListOptions(asRecord(request.query)),
+    );
+    return {
+      ...page,
+      run_group: runGroup,
+      session_summaries: page.items,
+    };
+  });
+
   app.post(path("/run-groups/:id/sessions"), async (request) => {
     const id = requiredString(asRecord(request.params), "id");
     if (!state.repo.getRunGroup(id))
@@ -166,9 +183,14 @@ function registerApiRoutes(
     const sessionId = requiredString(asRecord(request.body), "session_id");
     const session = requireSession(state.repo, sessionId);
     state.repo.addSessionToRunGroup(id, session.id);
+    const page = state.repo.listRunGroupSessions(
+      id,
+      runGroupSessionListOptions(asRecord(request.query)),
+    );
     return {
       run_group: state.repo.getRunGroup(id),
-      sessions: state.repo.listRunGroupSessions(id),
+      ...page,
+      sessions: page.items,
     };
   });
 
@@ -176,8 +198,11 @@ function registerApiRoutes(
     const id = requiredString(asRecord(request.params), "id");
     if (!state.repo.getRunGroup(id))
       throw new HttpError(404, "run_group_not_found", "run group not found");
-    const items = state.repo.listRunGroupSessions(id);
-    return { items, sessions: items, next_cursor: null, limit: items.length };
+    const page = state.repo.listRunGroupSessions(
+      id,
+      runGroupSessionListOptions(asRecord(request.query)),
+    );
+    return { ...page, sessions: page.items };
   });
 
   app.post(path("/workspaces"), async (request) => {
@@ -644,6 +669,17 @@ function itemPageResponse(
   if (recent !== undefined) itemOptions.recent = recent;
   const page = state.repo.listItems(sessionId, itemOptions);
   return { ...page, session_id: sessionId, type };
+}
+
+function runGroupSessionListOptions(
+  query: Record<string, unknown>,
+): RunGroupSessionListOptions {
+  const options: RunGroupSessionListOptions = {};
+  const limit = optionalNumber(query, "limit");
+  const cursor = optionalString(query, "cursor");
+  if (limit !== undefined) options.limit = limit;
+  if (cursor) options.cursor = cursor;
+  return options;
 }
 
 function transcriptPageResponse(

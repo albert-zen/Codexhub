@@ -171,6 +171,19 @@ building Codexhub with parallel workers.
   `--silent` and `--json` now produces clean machine-readable JSON, and the
   script's `friction` array reported no fake-mode control-plane issues in the
   local run.
+- Issue `#40` confirmed the review-gate loop is useful for runtime-boundary
+  changes. The implementation worker added a supervisor availability seam and
+  passed static gates, but a read-only reviewer caught a send-time unavailable
+  persistence bug for custom runtime controllers. The worker fixed it after a
+  `continue` message in the same Codexhub session, and the main integrator then
+  reran full unsandboxed validation. Keep this pattern for risky server/runtime
+  work: worker implements, reviewer checks the original task intent, worker
+  addresses findings, main integrator validates from the shared checkout.
+- The same `#40` run repeated the known worktree sandbox limitation: Vitest and
+  recursive pnpm commands can hit `spawn EPERM` inside a worker sandbox even
+  when the code is valid. Workers should report the blocked command precisely
+  and run narrower static checks or direct smoke scripts; the main integrator
+  remains responsible for final `pnpm test` and root quality gates.
 
 ## Suggested Ownership Map
 

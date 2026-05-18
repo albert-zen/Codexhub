@@ -238,8 +238,9 @@ Status: complete for the first CLI and GUI loop.
 Status: complete for the first hardening pass.
 
 - Add fixture coverage for real Codex payloads.
-- Reconcile persisted `starting` and `running` sessions after server restart
-  when no live runtime process exists.
+- Reconcile persisted `starting`, `running`, and non-continuable
+  `awaiting_input` sessions after server restart when no live runtime process
+  exists.
 - Centralize and validate host, port, and database runtime config.
 - Decide and test the route policy: `/api/v1` is canonical, root routes remain
   supported local aliases for CLI/web convenience.

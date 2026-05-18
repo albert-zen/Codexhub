@@ -180,13 +180,15 @@ export class CodexRuntime {
 
     const managed = this.managed.get(session.id);
     if (!managed) {
-      this.repo.markMessageFailed(
-        options.message.id,
-        "session process is not available in this server process",
-      );
-      throw new Error(
-        "session process is not available in this server process",
-      );
+      const error = new SessionProcessUnavailableError(session.id);
+      this.repo.markMessageFailed(options.message.id, error.message);
+      this.repo.updateSession(session.id, {
+        status: "failed",
+        failure_reason: error.message,
+        process_pid: null,
+        ended_at: new Date().toISOString(),
+      });
+      throw error;
     }
 
     if (mode === "steer") {
@@ -482,6 +484,17 @@ export class CodexRuntime {
     this.managed.delete(sessionId);
     this.failPending(managed, new Error("Codex app-server stopped"));
     managed.process.kill();
+  }
+}
+
+export class SessionProcessUnavailableError extends Error {
+  readonly code = "session_process_unavailable";
+
+  constructor(readonly sessionId: string) {
+    super(
+      "session does not have a live Codex app-server process in this server process; start a follow-up session",
+    );
+    this.name = "SessionProcessUnavailableError";
   }
 }
 

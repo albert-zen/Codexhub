@@ -404,7 +404,7 @@ export class HubRepository {
   }
 
   reconcileUnavailableTransientSessions(
-    failureReason = "Server restarted without a live Codex app-server process; session cannot be resumed.",
+    failureReason = "Server restarted without a live Codex app-server process; session cannot be continued in this server process. Start a follow-up session.",
   ): number {
     const now = isoNow();
     const result = this.db
@@ -412,7 +412,7 @@ export class HubRepository {
         `UPDATE worker_sessions
          SET status = 'failed', failure_reason = ?, process_pid = NULL,
              ended_at = ?, updated_at = ?
-         WHERE status IN ('starting', 'running')`,
+         WHERE status IN ('starting', 'running', 'awaiting_input')`,
       )
       .run(failureReason, now, now);
     return Number(result.changes);

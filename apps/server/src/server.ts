@@ -16,7 +16,7 @@ import {
   type SessionListOptions,
   type UpdateReviewGateStatusInput,
 } from "./repository.js";
-import { CodexRuntime } from "./runtime.js";
+import { CodexRuntime, SessionProcessUnavailableError } from "./runtime.js";
 import { cleanupWorkspace } from "./workspace-cleanup.js";
 import { buildWorkspace } from "./workspace-builder.js";
 
@@ -372,9 +372,17 @@ function registerApiRoutes(
       sender_id: optionalString(body, "sender_id"),
     });
 
-    const updatedSession = await state.runtime.sendMessage(session, workspace, {
-      message,
-    });
+    let updatedSession: WorkerSession;
+    try {
+      updatedSession = await state.runtime.sendMessage(session, workspace, {
+        message,
+      });
+    } catch (error) {
+      if (error instanceof SessionProcessUnavailableError) {
+        throw new HttpError(409, error.code, error.message);
+      }
+      throw error;
+    }
     return {
       message:
         state.repo

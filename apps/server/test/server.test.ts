@@ -613,7 +613,7 @@ describe("Codexhub API", () => {
     );
   });
 
-  it("reconciles only persisted starting and running sessions on startup", async () => {
+  it("reconciles persisted active sessions without live processes on startup", async () => {
     const dbPath = join(tempDir, "codexhub.sqlite");
     const database = openDatabase({ path: dbPath });
     const repo = new HubRepository(database.db);
@@ -688,9 +688,12 @@ describe("Codexhub API", () => {
       expect(running.session.process_pid).toBeNull();
       expect(running.session.ended_at).toEqual(expect.any(String));
 
-      expect(awaitingInput.session.status).toBe("awaiting_input");
-      expect(awaitingInput.session.failure_reason).toBeNull();
-      expect(awaitingInput.session.process_pid).toBe("pid-awaiting_input");
+      expect(awaitingInput.session.status).toBe("failed");
+      expect(awaitingInput.session.failure_reason).toContain(
+        "cannot be continued",
+      );
+      expect(awaitingInput.session.process_pid).toBeNull();
+      expect(awaitingInput.session.ended_at).toEqual(expect.any(String));
 
       expect(completed.session.status).toBe("completed");
       expect(completed.session.failure_reason).toBeNull();
@@ -707,6 +710,79 @@ describe("Codexhub API", () => {
       await restarted.close();
     }
   });
+
+  it.each(["continue", "steer"] as const)(
+    "fails a %s send to an awaiting session without a live process",
+    async (mode) => {
+      const dbPath = join(tempDir, `orphan-${mode}.sqlite`);
+      const instance = await createServer({ dbPath, logger: false });
+      const database = openDatabase({ path: dbPath });
+      let sessionId: string;
+      try {
+        const repo = new HubRepository(database.db);
+        const project = repo.createProject({ name: `orphan-${mode}` });
+        const workspace = repo.createWorkspace({
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, `orphan-${mode}-workspace`),
+          cwd: join(tempDir, `orphan-${mode}-workspace`),
+        });
+        const session = repo.createSession({
+          project_id: project.id,
+          workspace_id: workspace.id,
+        });
+        sessionId = session.id;
+        repo.updateSession(session.id, {
+          status: "awaiting_input",
+          codex_thread_id: "thread-orphan",
+          codex_turn_id: "turn-orphan",
+          codex_session_key: "thread-orphan-turn-orphan",
+          process_pid: "pid-orphan",
+        });
+      } finally {
+        database.close();
+      }
+
+      try {
+        const response = await instance.inject({
+          method: "POST",
+          url: `/api/v1/sessions/${sessionId}/messages`,
+          payload: {
+            mode,
+            content: "Please continue.",
+            sender_type: "manager_agent",
+          },
+        });
+        const body = response.json();
+        expect(response.statusCode).toBe(409);
+        expect(body.error.code).toBe("session_process_unavailable");
+        expect(body.error.message).toContain("live Codex app-server process");
+
+        const inspected = await getFrom(
+          instance,
+          `/api/v1/sessions/${sessionId}`,
+        );
+        expect(inspected.session.status).toBe("failed");
+        expect(inspected.session.failure_reason).toContain(
+          "start a follow-up session",
+        );
+        expect(inspected.session.process_pid).toBeNull();
+
+        const messages = await getFrom(
+          instance,
+          `/api/v1/sessions/${sessionId}/messages`,
+        );
+        expect(messages.messages).toHaveLength(1);
+        expect(messages.messages[0]).toMatchObject({
+          mode,
+          status: "failed",
+          error: expect.stringContaining("live Codex app-server process"),
+        });
+      } finally {
+        await instance.close();
+      }
+    },
+  );
 });
 
 async function post(url: string, payload: unknown): Promise<any> {

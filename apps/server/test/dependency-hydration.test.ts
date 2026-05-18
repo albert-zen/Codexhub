@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   hydrateWorktreeDependencies,
+  pnpmCommand,
   type CommandRunner,
 } from "../src/dependency-hydration.js";
 
@@ -60,7 +61,7 @@ describe("worktree dependency hydration", () => {
     expect(result.status).toBe("hydrated");
     expect(calls).toEqual([
       {
-        command: "pnpm",
+        command: pnpmCommand(),
         args: [
           "install",
           "--offline",
@@ -73,6 +74,11 @@ describe("worktree dependency hydration", () => {
         cwd: await realpath(workspacePath),
       },
     ]);
+  });
+
+  it("uses the Windows pnpm command shim when needed", () => {
+    expect(pnpmCommand("win32")).toBe("pnpm.cmd");
+    expect(pnpmCommand("linux")).toBe("pnpm");
   });
 
   it("fails clearly when the pnpm source checkout has not been installed", async () => {

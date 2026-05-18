@@ -88,7 +88,8 @@ export function hydrateWorktreeDependencies(
   mkdirSync(workspacePath, { recursive: true });
 
   const runCommand = options.runCommand ?? runDependencyCommand;
-  const result = runCommand("pnpm", args, { cwd: workspacePath });
+  const command = pnpmCommand();
+  const result = runCommand(command, args, { cwd: workspacePath });
   if (result.status !== 0) {
     throw new Error(
       `pnpm worktree dependency hydration failed (${result.status}) in ${workspacePath}: ${commandDiagnostic(result)}`,
@@ -97,10 +98,14 @@ export function hydrateWorktreeDependencies(
 
   return {
     status: "hydrated",
-    command: "pnpm",
+    command,
     args,
     store_dir: plan.store_dir ?? null,
   };
+}
+
+export function pnpmCommand(platform = process.platform): string {
+  return platform === "win32" ? "pnpm.cmd" : "pnpm";
 }
 
 function validatePnpmSourceInstall(sourcePath: string): string | null {

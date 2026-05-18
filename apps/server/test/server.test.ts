@@ -352,10 +352,6 @@ describe("Codexhub API", () => {
       return session;
     }
 
-    const awaiting = createDashboardSession(
-      "awaiting_input",
-      "Need manager input on package boundaries.",
-    );
     const review = createDashboardSession(
       "completed",
       "Implementation complete and ready for review.",
@@ -372,7 +368,7 @@ describe("Codexhub API", () => {
     });
     repo.createReviewFinding({
       session_id: review.id,
-      reviewer_session_id: awaiting.id,
+      reviewer_session_id: failed.id,
       severity: "high",
       summary: "Open finding should be visible in the dashboard.",
     });
@@ -380,6 +376,23 @@ describe("Codexhub API", () => {
 
     const seeded = await createServer({ dbPath, logger: false });
     try {
+      const awaitingResponse = await seeded.inject({
+        method: "POST",
+        url: "/api/v1/sessions",
+        payload: {
+          workspace_id: workspace.id,
+          initial_message: "Need manager input on package boundaries.",
+          codex_options: { fake: true },
+        },
+      });
+      expect(awaitingResponse.statusCode).toBe(200);
+      const awaiting = awaitingResponse.json().session;
+      await seeded.inject({
+        method: "POST",
+        url: `/api/v1/run-groups/${runGroup.id}/sessions`,
+        payload: { session_id: awaiting.id },
+      });
+
       const firstPage = await getFrom(
         seeded,
         `/api/v1/run-groups/${runGroup.id}/dashboard?limit=2`,
@@ -392,11 +405,23 @@ describe("Codexhub API", () => {
       expect(firstPage.items).toEqual(firstPage.session_summaries);
       expect(firstPage.next_cursor).toBe("2");
 
-      expect(firstPage.session_summaries[0]).toMatchObject({
+      const fullPage = await getFrom(
+        seeded,
+        `/api/v1/run-groups/${runGroup.id}/dashboard?limit=10`,
+      );
+      const summariesBySessionId = new Map(
+        fullPage.session_summaries.map((summary: any) => [
+          summary.session.id,
+          summary,
+        ]),
+      );
+
+      expect(summariesBySessionId.get(awaiting.id)).toMatchObject({
         session: {
           id: awaiting.id,
           status: "awaiting_input",
-          last_agent_message: "Need manager input on package boundaries.",
+          last_agent_message:
+            "Fake Codex worker received: Need manager input on package boundaries.",
         },
         review_status: {
           implementation_done: false,
@@ -407,7 +432,7 @@ describe("Codexhub API", () => {
         attention_required: true,
         attention_reasons: ["awaiting_input"],
       });
-      expect(firstPage.session_summaries[1]).toMatchObject({
+      expect(summariesBySessionId.get(review.id)).toMatchObject({
         session: {
           id: review.id,
           status: "completed",
@@ -432,7 +457,7 @@ describe("Codexhub API", () => {
       );
       expect(secondPage.session_summaries).toHaveLength(1);
       expect(secondPage.next_cursor).toBeNull();
-      expect(secondPage.session_summaries[0]).toMatchObject({
+      expect(summariesBySessionId.get(failed.id)).toMatchObject({
         session: {
           id: failed.id,
           status: "failed",

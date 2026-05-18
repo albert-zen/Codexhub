@@ -171,6 +171,8 @@ export interface LatestItemResponse {
   session_id: string;
   type: string;
   item: Item | null;
+  session?: WorkerSession;
+  last_agent_message?: string | null;
 }
 
 export interface MessageResponse {

@@ -521,7 +521,13 @@ function latestResponse(
     optionalString(asRecord(request.query), "type"),
     "agentmessage",
   );
-  const item = state.repo.latestItem(session.id, type);
+  const item = latestManagerItem(
+    state,
+    session,
+    state.repo.latestItem(session.id, type),
+    includeSession,
+    type,
+  );
   return includeSession
     ? {
         session_id: session.id,
@@ -531,6 +537,28 @@ function latestResponse(
         last_agent_message: session.last_agent_message,
       }
     : { session_id: session.id, type, item };
+}
+
+function latestManagerItem(
+  state: ServerState,
+  session: WorkerSession,
+  item: import("@codexhub/core").Item | null,
+  includeSession: boolean,
+  type: ItemType | "all",
+): import("@codexhub/core").Item | null {
+  if (
+    !includeSession ||
+    type !== "agentmessage" ||
+    !session.last_agent_message
+  ) {
+    return item;
+  }
+
+  const source = session.last_agent_message_item_id
+    ? state.repo.getItem(session.last_agent_message_item_id)
+    : item;
+  if (!source) return item;
+  return { ...source, text_excerpt: session.last_agent_message };
 }
 
 function requireSession(repo: HubRepository, id: string): WorkerSession {

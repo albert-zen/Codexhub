@@ -104,6 +104,10 @@ interface SessionItemsOptions extends BaseCommandOptions {
   recent?: boolean;
 }
 
+interface SessionLatestOptions extends BaseCommandOptions {
+  type?: string;
+}
+
 interface SessionTraceOptions extends BaseCommandOptions {
   type?: string;
   limit?: number;
@@ -374,10 +378,14 @@ export function createProgram(env: CliEnvironment = {}): Command {
     session.command("latest").description("Print the latest agent message"),
   )
     .argument("<session-id>", "Session ID")
-    .action((sessionId: string, opts: BaseCommandOptions) =>
+    .option("--type <type>", "Item type filter")
+    .action((sessionId: string, opts: SessionLatestOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get(
           `/sessions/${encodeURIComponent(sessionId)}/latest`,
+          {
+            query: omitQuery({ type: parseOptionalItemType(opts.type) }),
+          },
         );
         printResult(env, opts, result, () => formatLatest(result));
       }),
@@ -389,10 +397,14 @@ export function createProgram(env: CliEnvironment = {}): Command {
       .description("Print a compact result for the latest agent message"),
   )
     .argument("<session-id>", "Session ID")
-    .action((sessionId: string, opts: BaseCommandOptions) =>
+    .option("--type <type>", "Item type filter")
+    .action((sessionId: string, opts: SessionLatestOptions) =>
       runAction(env, opts, async () => {
         const result = await client(program, env).get(
           `/sessions/${encodeURIComponent(sessionId)}/latest`,
+          {
+            query: omitQuery({ type: parseOptionalItemType(opts.type) }),
+          },
         );
         printResult(env, opts, result, () => formatLatest(result));
       }),
@@ -1060,11 +1072,27 @@ function formatLatest(value: unknown): string {
   if (value === null || value === undefined) return "No agent message.";
   if (typeof value === "string") return value;
 
+  const envelope = asRecord(value);
+  const envelopeType = stringField(envelope, "type");
+  const managerMessage =
+    stringField(envelope, "last_agent_message") ??
+    stringField(asRecord(envelope?.session), "last_agent_message");
+  if (
+    managerMessage &&
+    (envelopeType === null || envelopeType === "agentmessage")
+  ) {
+    return managerMessage;
+  }
+
+  const itemRecord = asRecord(envelope?.item);
+  const latestRecord = asRecord(envelope?.latest);
+  const sessionRecord = asRecord(envelope?.session);
   const record =
-    unwrapRecord(value, "item") ??
-    unwrapRecord(value, "latest") ??
-    unwrapRecord(value, "session") ??
-    asRecord(value);
+    itemRecord ??
+    latestRecord ??
+    (envelopeType === null || envelopeType === "agentmessage"
+      ? (sessionRecord ?? envelope)
+      : null);
   const text =
     stringField(record, "last_agent_message") ??
     stringField(record, "text_excerpt") ??

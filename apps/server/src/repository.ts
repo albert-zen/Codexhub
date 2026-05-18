@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
   classifyCodexPayload,
+  type Item,
   type ItemType,
   type MessageMode,
   type Project,
@@ -615,15 +616,12 @@ export class HubRepository {
     return this.getReviewGateStatus(sessionId);
   }
 
-  appendItem(
-    sessionId: string,
-    payload: unknown,
-  ): import("@codexhub/core").Item {
+  appendItem(sessionId: string, payload: unknown): Item {
     const session = this.requireSession(sessionId);
     const sequence = session.last_item_sequence + 1;
     const classification = classifyCodexPayload(payload);
     const now = isoNow();
-    const item = {
+    const item: Item = {
       id: id("item"),
       session_id: sessionId,
       sequence,
@@ -656,7 +654,12 @@ export class HubRepository {
         item.text_excerpt,
       );
 
-    if (item.type === "agentmessage" && item.text_excerpt) {
+    const agentProjection =
+      item.type === "agentmessage" && item.text_excerpt
+        ? this.agentMessageProjection(item)
+        : null;
+
+    if (agentProjection && !agentProjection.isSingleDeltaFragment) {
       this.db
         .prepare(
           `UPDATE worker_sessions
@@ -666,9 +669,9 @@ export class HubRepository {
         )
         .run(
           item.sequence,
-          item.id,
-          this.agentMessageText(item),
-          item.created_at,
+          agentProjection.itemId,
+          agentProjection.text,
+          agentProjection.createdAt,
           now,
           sessionId,
         );
@@ -743,10 +746,17 @@ export class HubRepository {
     };
   }
 
+  getItem(id: string): Item | null {
+    const row = this.db
+      .prepare("SELECT * FROM items WHERE id = ? LIMIT 1")
+      .get(id);
+    return row ? itemFromRow(row) : null;
+  }
+
   latestItem(
     sessionId: string,
     type: ItemType | "all" = "agentmessage",
-  ): import("@codexhub/core").Item | null {
+  ): Item | null {
     const noTypeFilter = type === "all";
     const row = noTypeFilter
       ? this.db
@@ -779,28 +789,57 @@ export class HubRepository {
     return projectTranscriptEntries(sessionId, messages, items, options);
   }
 
-  private agentMessageText(item: {
-    codex_method: string | null;
-    text_excerpt: string | null;
-    codex_item_id: string | null;
-    session_id: string;
-  }): string | null {
+  private agentMessageProjection(item: Item): {
+    itemId: string;
+    text: string;
+    createdAt: string;
+    isSingleDeltaFragment: boolean;
+  } | null {
     if (!item.text_excerpt) return null;
-    if (item.codex_method !== "item/agentMessage/delta" || !item.codex_item_id)
-      return item.text_excerpt;
+    const group = this.agentMessageGroup(item);
+    const completed = [...group]
+      .reverse()
+      .find(
+        (entry) =>
+          entry.codex_method === "item/completed" &&
+          entry.text_excerpt !== null &&
+          entry.text_excerpt.trim() !== "",
+      );
 
-    const prior = this.db
+    if (completed?.text_excerpt) {
+      return {
+        itemId: completed.id,
+        text: completed.text_excerpt,
+        createdAt: completed.created_at,
+        isSingleDeltaFragment: false,
+      };
+    }
+
+    const text =
+      group
+        .map((entry) => entry.text_excerpt ?? "")
+        .join("")
+        .trim() || item.text_excerpt;
+
+    return {
+      itemId: item.id,
+      text,
+      createdAt: item.created_at,
+      isSingleDeltaFragment:
+        item.codex_method === "item/agentMessage/delta" && group.length === 1,
+    };
+  }
+
+  private agentMessageGroup(item: Item): Item[] {
+    if (!item.codex_item_id) return [item];
+    return this.db
       .prepare(
-        `SELECT text_excerpt FROM items
+        `SELECT * FROM items
          WHERE session_id = ? AND type = 'agentmessage' AND codex_item_id = ?
          ORDER BY sequence ASC`,
       )
       .all(item.session_id, item.codex_item_id)
-      .map((row) => string(row, "text_excerpt"))
-      .filter((text): text is string => text !== null)
-      .join("");
-
-    return prior || item.text_excerpt;
+      .map(itemFromRow);
   }
 
   private requireSession(id: string): WorkerSession {

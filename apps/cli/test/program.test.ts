@@ -95,6 +95,82 @@ describe("codexhub commands", () => {
     );
   });
 
+  it("passes latest item type filters and keeps manager-facing JSON intact", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse({
+          session_id: "sess_1",
+          type: "agentmessage",
+          item: {
+            type: "agentmessage",
+            codex_method: "item/completed",
+            text_excerpt: "Complete manager-facing answer.",
+          },
+          last_agent_message: "Complete manager-facing answer.",
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "agentmessage",
+      "--json",
+    ]);
+
+    expect(calls).toEqual([
+      "http://api.test/sessions/sess_1/latest?type=agentmessage",
+    ]);
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      type: "agentmessage",
+      item: {
+        codex_method: "item/completed",
+        text_excerpt: "Complete manager-facing answer.",
+      },
+      last_agent_message: "Complete manager-facing answer.",
+    });
+  });
+
+  it("prints projected latest text instead of a raw delta fragment", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "agentmessage",
+          item: {
+            type: "agentmessage",
+            codex_method: "item/agentMessage/delta",
+            text_excerpt: "The",
+          },
+          last_agent_message: "The complete draft",
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+    ]);
+
+    expect(output.join("").trim()).toBe("The complete draft");
+  });
+
   it("starts sessions with task spec metadata", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const program = createProgram({

@@ -15,105 +15,37 @@ Use these defaults unless an issue says otherwise:
 - For code changes, verify with the narrow package checks plus broader root
   checks when the blast radius is unclear.
 
-## Initial Implementation Status
+## Closed Baseline
 
-The original seed backlog for server config, SQLite persistence, workspace and
-session APIs, worker launch, raw item ingestion, item reads, latest-message
-projection, message queueing, CLI commands, and first web dashboard has been
-substantially implemented.
+GitHub issues `#1` through `#18` are closed. Treat them as implemented baseline,
+not active backlog. The original CH-001 through CH-012 seed drafts are
+superseded and should not be reopened as broad epics.
 
-Those early CH-001 through CH-012 drafts are superseded by the open GitHub issue
-set below. Do not re-open the seed issues as large epics; use the current issues
-or split a smaller follow-up when needed.
+Closed implementation areas:
 
-## Current Hardening Pass
+- Raw item fixtures, classification, and lossless storage hardening (`#1`).
+- Server restart reconciliation for stale running/starting sessions (`#2`).
+- CLI smoke tests against a real temporary server (`#3`).
+- Explicit non-empty `continue` message content across API, CLI, and web (`#4`).
+- First-stage shared API DTO/client contracts (`#5`).
+- Repo docs/backlog refresh after the initial implementation (`#6`).
+- Centralized server host, port, and database config parsing (`#7`).
+- Canonical `/api/v1` route policy with supported local root aliases (`#8`).
+- First readable web transcript surface and CLI result/trace shortcuts (`#9`,
+  `#10`).
+- README local loop documentation (`#11`).
+- Workspace cleanup and git worktree workspace mode (`#12`, `#13`).
+- Web raw-item transcript window pagination (`#14`).
+- Task spec metadata on WorkerSessions (`#15`).
+- Minimal worker run groups (`#16`).
+- GitHub Actions runtime warning cleanup (`#17`).
+- Review-gate status metadata as observability, not validation (`#18`).
 
-These issues are resolved by the current hardening pass and should be closed
-after CI is green:
-
-1. `#6 docs(repo): refresh issue backlog after initial implementation`
-   - Status: implemented.
-   - Area: `docs`.
-   - Goal: make roadmap, backlog, docs process, and dogfood notes current.
-   - Acceptance: docs are concise, consistent with the product boundary, and no
-     code or local Codex skill changes are made.
-
-2. `#4 fix(api): require explicit continue message content`
-   - Status: implemented.
-   - Area: `apps/server`, `apps/cli`, `apps/web`, tests.
-   - Goal: every `continue` message must contain the exact instruction sent by
-     the manager or human.
-   - Decision: empty `continue` is invalid; callers must persist an explicit
-     instruction such as "Please continue your work."
-   - Acceptance: server rejects empty `continue` with structured `400`, GUI
-     cannot silently send empty continue, persisted content is explicit, and
-     tests cover rejection plus explicit success.
-
-3. `#9 feat(web): render session trace as readable transcript`
-   - Status: implemented.
-   - Area: `apps/web`, likely server/core transcript helpers.
-   - Goal: make web session detail read like a conversation instead of raw item
-     delta fragments.
-   - Acceptance: default trace shows prompts, complete agent messages, and
-     collapsed tool calls/results; raw JSON remains available as a debug view;
-     aggregation is tested or explicitly justified for v1.
-
-4. `#10 feat(cli): add convenient session result and trace commands`
-   - Status: implemented.
-   - Area: `apps/cli`, likely API/query helpers.
-   - Goal: make normal "what happened?" inspection one short command.
-   - Acceptance: add bounded `session result`, `session trace`,
-     `session watch`, and `sessions recent` flows with structured JSON and
-     cursor/range metadata for manager agents.
-
-5. `#1 test(core/server): add realistic Codex app-server payload fixtures`
-   - Status: implemented.
-   - Area: `packages/core`, `apps/server`.
-   - Goal: harden raw item ingestion and classification against real Codex
-     app-server event shapes.
-   - Acceptance: fixtures cover message deltas/completions, tool calls/results,
-     state, reasoning, errors, malformed/non-protocol input, and raw preservation
-     enough for replay/audit.
-
-6. `#2 fix(server): reconcile persisted sessions on server startup`
-   - Status: implemented.
-   - Area: `apps/server`.
-   - Goal: prevent persisted `starting` or `running` sessions from looking
-     messageable after the server has lost in-memory process handles.
-   - Acceptance: startup reconciliation marks stale sessions deterministically,
-     clears stale pids, records a clear reason, and message send returns a
-     structured error.
-
-7. `#3 test(cli): add smoke tests against a running test server`
-   - Status: implemented.
-   - Area: `apps/cli`, test harness.
-   - Goal: catch server/CLI contract drift beyond mocked fetch tests.
-   - Acceptance: temporary-server smoke tests cover project/workspace/session
-     creation, fake session start, latest, trace, and stable JSON fields.
-
-8. `#7 fix(server): centralize host and port config validation`
-   - Status: implemented.
-   - Area: `apps/server`.
-   - Goal: centralize `CODEXHUB_HOST`, `CODEXHUB_PORT`, and
-     `CODEXHUB_DB_PATH` parsing.
-   - Acceptance: defaults remain unchanged, invalid port fails clearly before
-     Fastify starts, and config parser tests cover default/override/invalid
-     cases.
-
-9. `#8 feat(api): decide and enforce root route alias policy`
-   - Status: implemented.
-   - Area: `apps/server`, `apps/cli`, `apps/web`, docs.
-   - Decision: `/api/v1` is canonical; root aliases remain a supported local
-     convenience surface for CLI/web and are covered by route tests.
-
-10. `#5 refactor(api): share DTO and client contracts across CLI and web`
-    - Status: implemented for first-stage DTO sharing; continue incrementally
-      when new API contracts are added.
-    - Area: `packages/core`, `apps/cli`, `apps/web`.
-    - Goal: reduce duplicate response/request shapes without introducing a
-      heavy generated client.
-    - Acceptance: CLI and web consume shared DTOs/helpers where practical, and
-      type checks catch shared response field drift.
+The important boundary after `#18`: Codexhub has first-pass metadata for task
+specs, worktrees, run groups, and review status. It does not yet have the full
+orchestration UX around conversation-level transcript paging, terminal-session
+follow-up, structured review findings, ownership conflict display, or run group
+dashboards.
 
 ## Backlog Guardrails
 
@@ -128,28 +60,44 @@ after CI is green:
 
 ## Next Backlog
 
-The next small issues created after the first hardening pass are:
+The next GitHub issue wave is `#19` through `#27`. GitHub remains the execution
+source of truth for issue state; this section keeps the local manager-agent
+reading path aligned with that tracker.
 
-1. `#11 docs(readme): document the full local Codexhub loop`
-   - Copy-pasteable server/CLI/fake-worker/result/trace workflow.
-2. `#12 feat(workspace): add safe workspace cleanup flow`
-   - Status: implemented; close after CI is green.
-   - Conservative cleanup/delete semantics with path safety tests.
-3. `#13 feat(workspace): add git worktree workspace mode`
-   - Status: implemented; close after CI is green.
-   - Isolated write scopes for parallel worker sessions.
-4. `#14 feat(web): paginate readable session transcript`
-   - Status: implemented; close after CI is green.
-   - Load transcript windows without rereading the first 200 items.
-5. `#15 feat(session): attach task spec metadata to worker sessions`
-   - Status: implemented; close after CI is green.
-   - Persist immutable task intent/scope/acceptance criteria references.
-6. `#16 feat(control-plane): add minimal worker run groups`
-   - Status: implemented; close after CI is green.
-   - Observe coordinated batches without becoming a project management system.
-7. `#17 ci(repo): address GitHub Actions runtime warnings`
-   - Handle Node 24 action runtime and Windows runner transition notices.
-8. `#18 feat(session): track review-gate status metadata`
-   - Status: implemented; close after CI is green.
-   - Track worker/reviewer progress as observability metadata, not a validation
-     gate.
+1. `#19 fix(transcript): add conversation-level transcript projection`
+   - Add transcript entries distinct from raw items, with pagination by
+     conversation entry and complete agent messages across raw item page
+     boundaries.
+   - Blocks `#20` and `#23`.
+2. `#20 fix(web): consume conversation transcript in session detail`
+   - Make web session detail default to prompt, complete agent message, and
+     collapsed tool/debug transcript entries instead of raw item windows.
+   - Depends on `#19`.
+3. `#21 fix(web): explain disabled session actions`
+   - Make unavailable steer/continue/stop/complete actions explain state and
+     content requirements, especially terminal sessions.
+   - Can run in parallel with `#19`.
+4. `#22 docs(roadmap): reconcile implemented phases and next backlog`
+   - Keep `docs/roadmap.md`, `docs/github-issues.md`, and dogfood findings
+     current after the `#1` through `#18` closure and the `#19` through `#27`
+     issue wave.
+5. `#23 feat(session): start follow-up session from terminal session`
+   - Create a new related session from stopped, completed, or failed sessions
+     instead of reviving dead Codex processes.
+   - Depends on `#19`.
+6. `#24 feat(web): add session creation and follow-up flow`
+   - Let humans start sessions and terminal-session follow-ups from the GUI with
+     compact task-spec inputs and visible errors.
+   - Depends on `#21` and `#23`.
+7. `#25 feat(review): persist review findings and worker responses`
+   - Store structured reviewer findings and worker accepted/rejected/deferred
+     responses as observability records.
+   - Can run after `#19`; avoid overlapping migrations with `#23`.
+8. `#26 feat(run-groups): show batch dashboard with worker progress`
+   - Show run group sessions, statuses, latest messages, review state, and
+     blocked/failed attention indicators through bounded API/web reads.
+   - Depends on `#25`.
+9. `#27 test(dogfood): add long-running Codexhub smoke script`
+   - Add a repeatable fake-mode dogfood smoke path, with real Codex mode manual
+     and opt-in.
+   - Depends on `#19` and `#23`.

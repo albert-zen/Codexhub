@@ -50,9 +50,10 @@ building Codexhub with parallel workers.
   and handoff requirements.
 - Do not store Codexhub project-specific subagent norms as a local machine
   Codex skill. Keep them in the repository so the policy travels with the code.
-- Dogfood issue refresh found the active backlog is now GitHub issues `#1`
-  through `#10`; local seed issue drafts were stale after initial implementation
-  and needed replacement with current priority order.
+- Dogfood issue refresh found the first execution waves through GitHub issues
+  `#1` through `#18` are now closed; local backlog docs need to present those as
+  implemented baseline and keep the next active wave aligned to `#19` through
+  `#27`.
 - Codexhub's current result surfaces are technically useful but awkward for
   daily dogfood: manager agents have to query raw item fragments or remember
   longer CLI commands to answer "what happened?"
@@ -96,13 +97,26 @@ building Codexhub with parallel workers.
   Otherwise manager agents may delegate completed seed work instead of the real
   next bottleneck.
 - Dogfooding `codexhub session trace <id> --limit 5` against a real stored
-  session showed the new trace command gives useful bounded context, but the
-  first web transcript implementation still needs explicit pagination for long
-  sessions. Tracked as GitHub issue `#14`.
+  session showed bounded context is useful, and `#14` added web item-window
+  pagination. A remaining gap is conversation-level transcript paging: manager
+  agents should page through complete prompts, agent messages, and tool rows
+  instead of raw Codex item deltas. Tracked as `#19` and `#20`.
+- Real dogfood sessions can end in stopped, completed, or failed states while
+  follow-up work is still needed. Sending to a terminal session should remain
+  invalid; the control-plane path should start a related follow-up session that
+  references the previous task/session metadata. Tracked as `#23` and `#24`.
 - CI can be green while still surfacing platform drift. The successful run for
   `91038bb` warned about GitHub Actions Node 20 deprecation and
-  `windows-latest` redirection; track those as normal backlog, not as immediate
-  blockers. Tracked as `#17`.
+  `windows-latest` redirection; that cleanup was tracked and closed as `#17`.
+- Dogfood worker worktrees can trigger Git's safe-directory guard when the
+  worktree owner differs from the sandbox user. Agents should use per-command
+  `git -c safe.directory=<worktree>` for local status/diff reads and should not
+  change global git config inside worker sandboxes. Tracked as `#28`.
+- Issue `#22` could edit docs and run validation, but could not commit because
+  the worktree `.git` file pointed at metadata under the parent checkout outside
+  the sandbox writable roots. Agents should leave validated changes intact and
+  report the exact commit command for the main integrator instead of fighting
+  the sandbox. Tracked as `#30`.
 - When a commit closes a large batch of issues, create the next issue batch
   immediately while the dogfood findings are fresh. This keeps the manager's
   next planning session focused on current bottlenecks rather than stale seed

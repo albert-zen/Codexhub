@@ -10,10 +10,11 @@ The first usable loop now exists:
 create project/workspace -> start session -> save raw items -> read latest
 agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
 
-The current product step is hardening that loop for repeated dogfood use:
-parallel workspace safety, longer-running worker supervision, and review/task
-metadata. The first readable transcript/result surfaces now exist, so normal
-inspection no longer requires reading JSON deltas.
+The current product step is improving the manager-facing reading and follow-up
+loop after the first orchestration metadata pass. Worktree workspaces, task spec
+metadata, run groups, and review-gate status now exist as first-pass control
+plane records. The next gaps are conversation-level transcript paging,
+terminal-session follow-up, clearer web actions, and batch dashboards.
 
 ## V1 Outcome
 
@@ -42,33 +43,36 @@ The repository currently contains:
 - `apps/web` with a compact project/session/detail UI, readable transcript,
   item type filter, latest agent message, send steer/continue, stop, and
   complete actions.
-- Docs for Symphony lessons, subagent operations, roadmap, and first issue
-  drafts.
+- Docs for Symphony lessons, subagent operations, roadmap, task specs,
+  review-gate workflow, and local issue/backlog synthesis.
 - Top-level `pnpm build`, `pnpm check`, `pnpm test`, and `pnpm format` scripts
   all pass.
 
+Issues `#1` through `#18` are closed and represent the implemented baseline for
+payload fixtures, restart reconciliation, CLI smoke coverage, API route policy,
+README loop docs, workspace cleanup/worktrees, web item-window pagination, task
+spec metadata, minimal run groups, CI warning cleanup, and review-gate status
+metadata.
+
 The following work remains open next:
 
-- Document the complete local loop in README (`#11`).
-- Workspace cleanup/delete endpoint and CLI command now exist for conservative
-  archive-first cleanup.
-- Broaden real Codex app-server fixture coverage as more live payloads are
-  observed.
-- Improve process cleanup behavior for stopped or failed real sessions.
-- Continue sharing API DTO/client contracts across CLI and web where it removes
-  real duplication without creating a large client abstraction.
-- Worktree-aware workspace creation now supports isolated branches and paths for
-  parallel worker sessions.
-- Web transcript pagination now exposes bounded item windows and previous/next
-  navigation.
-- Task spec metadata can now be attached when a session starts; run groups can
-  now observe related worker batches without becoming project management.
-- Review-gate status metadata now tracks worker/reviewer progress as
-  observability, not validation.
-- Define and automate task-spec, worker, review-subagent, and quality-gate
-  workflows for larger parallel builds.
-- Keep using the documentation system so task outcomes, workflow friction, and
-  lessons are captured after each worker run.
+- Add a conversation-level transcript projection so manager reads page through
+  complete transcript entries instead of raw item deltas (`#19`).
+- Make the web session detail consume that conversation transcript by default
+  (`#20`).
+- Explain disabled web session actions, especially terminal states that require
+  follow-up instead of sending to a dead session (`#21`).
+- Keep roadmap and local issue docs synchronized with the closed baseline and
+  next backlog (`#22`).
+- Start follow-up sessions from stopped, completed, or failed sessions without
+  reviving dead Codex processes (`#23`).
+- Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
+- Persist structured review findings and worker responses as observability, not
+  a validation gate (`#25`).
+- Add a run group dashboard for worker progress, latest messages, review state,
+  and attention indicators (`#26`).
+- Add a CI-safe fake dogfood smoke script, with real Codex runs manual and
+  opt-in (`#27`).
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
 GitHub issue tracker is the execution source of truth.
@@ -244,72 +248,93 @@ Status: complete for the first hardening pass.
 
 ### Phase 7: Readable Trace And Query Ergonomics
 
-Status: complete for the first readable result and trace pass.
+Status: first-pass complete for readable result/trace shortcuts; conversation
+projection remains open.
 
-- Build a transcript projection that aggregates Codex agent-message deltas into
-  complete readable messages.
-- Show sent prompts/messages, full agent messages, and collapsible tool calls in
-  chronological order.
-- Keep raw JSONL/item inspection available as an explicit debug mode.
-- Make the web session detail default to readable transcript/result inspection,
-  not raw delta fragments.
-- Add CLI shortcuts for `session result`, `session trace`, `session watch`, and
-  `sessions recent`.
-- Default result queries to a recent bounded window, such as the latest 10 or 20
-  transcript turns/messages.
-- Support cursor/range pagination so Manager Agents can inspect 20-50 without
-  re-reading 1-20.
+Implemented:
+
+- CLI shortcuts exist for `session result`, `session trace`, `session watch`,
+  and `sessions recent`.
+- The first web session detail pass can render a more readable trace while
+  preserving raw JSON/item inspection as an explicit debug surface.
+- Result and trace reads are bounded by default so normal inspection does not
+  dump a full raw session history.
+- Web item-window pagination exists for raw/session item inspection.
+
+Remaining:
+
+- Add a conversation-level transcript projection that produces complete prompt,
+  agent-message, and tool/debug entries independent of raw item windows (`#19`).
+- Make the web session detail consume that conversation transcript by default
+  instead of relying on raw item windows (`#20`).
+- Page by transcript entry cursor/window so Manager Agents can inspect complete
+  conversation slices without rereading earlier entries (`#19`).
 
 ### Phase 8: Explicit Task Specs
 
-Status: open.
+Status: first-pass complete for session metadata; workflow polish remains open.
 
-- Introduce a task-spec format for feature, component, and bug work.
-- Store task intent, scope, non-scope, acceptance criteria, validation commands,
-  and review focus separately from worker implementation notes.
-- Treat the task spec as immutable input for the worker unless a manager
-  explicitly assigns doc updates.
-- Let API/CLI/GUI associate WorkerSessions with task specs so humans can inspect
-  what a worker was asked to do.
-- Add issue templates that map cleanly into task specs for one issue / one
-  branch / one PR workflows.
-- Require each task to check which docs need updates before handoff.
+Implemented:
+
+- Task spec templates and GitHub issue forms exist for feature, component, and
+  bug-sized work.
+- Worker sessions can store task spec metadata and expose it through API, CLI,
+  and GUI detail surfaces.
+- Task intent, scope, non-scope, acceptance criteria, validation commands, and
+  review focus are treated as worker input rather than implementation notes.
+- Documentation-impact checks are part of the repo workflow.
+
+Remaining:
+
+- Keep refining issue-template/task-spec ergonomics as more dogfood sessions run.
+- Preserve the task spec as immutable input unless a manager explicitly assigns
+  doc updates.
+- Avoid turning task specs into project management records or validation gates.
 
 ### Phase 9: Review Subagent Quality Gate
 
-Status: open.
+Status: partially complete.
 
-- Require substantial worker tasks to spawn a read-only review subagent after the
-  first implementation pass.
-- Pass the review subagent the original task spec, changed files, validation
-  output, and diff paths.
-- Ask the review subagent to judge intent satisfaction, acceptance criteria,
-  tests, product boundaries, regressions, Windows/process risks, and
-  over-broad refactors.
-- Require the worker to respond to review findings as accepted, rejected, or
-  deferred.
-- Persist review findings and worker responses as part of the session/task
-  record.
-- Include documentation impact in the reviewer checklist.
+Implemented:
+
+- Review-gate workflow docs define the read-only reviewer role and checklist.
+- Review-gate status metadata tracks worker/reviewer progress as explicit
+  observability, not as automatic validation.
+
+Remaining:
+
+- Persist structured review findings and worker responses (`#25`).
+- Keep reviewer judgment focused on original task intent, acceptance criteria,
+  tests, product boundaries, regressions, Windows/process risks, over-broad
+  refactors, and documentation impact.
+- Do not block worker completion or create merge policy inside Codexhub.
 
 ### Phase 10: Parallel Build Orchestration
 
-Status: open.
+Status: first-pass complete for worktrees, run groups, and review status;
+orchestration UX remains open.
 
-- Add worktree-aware workspace creation for parallel workers that need isolated
-  write scopes.
-- Track package/file ownership per WorkerSession to avoid conflicts.
-- Add worker run groups so a manager can launch a coordinated batch of workers
-  for one roadmap slice.
-- Add quality-gate status per worker: implementation done, self-validation done,
-  review requested, review addressed, ready for human review.
-- Add a dashboard view for run groups, blocked workers, failed quality gates,
-  and review findings.
-- Keep this as a control-plane feature, not a project management replacement.
+Implemented:
+
+- Worktree-aware workspace creation supports isolated branches and paths for
+  parallel workers.
+- Minimal run groups can associate related WorkerSessions without becoming a
+  project management system.
+- Review-gate status metadata can track implementation, self-validation, review,
+  and human-review readiness as worker-reported state.
+
+Remaining:
+
+- Track package/file ownership per WorkerSession to reduce conflicts during
+  parallel work.
+- Add a run group dashboard for sessions, statuses, latest messages, review
+  state, blocked/failed indicators, and attention needs (`#26`).
+- Keep batch supervision bounded and read-oriented; do not add scheduling
+  policy, project management, validation gates, or CI coupling.
 
 ### Phase 10.5: Documentation Memory
 
-Status: open.
+Status: first-pass complete; keep current during dogfood.
 
 - Keep a clear documentation map so agents know where to write setup, roadmap,
   lessons, subagent operations, issue drafts, task specs, and review rules.

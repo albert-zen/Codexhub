@@ -11,6 +11,7 @@ import type {
   SendMessageRequest,
   SenderType,
   SessionListQuery,
+  StartFollowUpSessionRequest,
   StartSessionRequest,
   TranscriptListQuery,
   UpdateReviewGateStatusRequest,
@@ -75,6 +76,20 @@ interface RunGroupAddSessionOptions extends BaseCommandOptions {
 interface SessionStartOptions extends BaseCommandOptions {
   project: string;
   workspace: string;
+  message?: string;
+  prompt?: string;
+  file?: string;
+  taskSpecRef?: string;
+  taskSpecTitle?: string;
+  taskSpecIntent?: string;
+  taskSpecScope?: string;
+  taskSpecAcceptance?: string;
+  taskSpecFile?: string;
+  codexOptions?: string;
+}
+
+interface SessionFollowUpOptions extends BaseCommandOptions {
+  workspace?: string;
   message?: string;
   prompt?: string;
   file?: string;
@@ -361,6 +376,74 @@ export function createProgram(env: CliEnvironment = {}): Command {
           formatSessionStarted(unwrapRecord(result, "session")),
         );
       }),
+    );
+
+  jsonOption(
+    session
+      .command("follow-up")
+      .description("Start a new session from a terminal session"),
+  )
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
+    .argument("[message...]", "Initial message")
+    .option("-m, --message <text>", "Initial message")
+    .option("--prompt <text>", "Initial prompt")
+    .option("--file <path>", "Read initial message from a file")
+    .option(
+      "--workspace <id>",
+      "Workspace ID for the new session; defaults to the previous workspace",
+    )
+    .option("--task-spec-ref <ref>", "Task spec path or external reference")
+    .option("--task-spec-title <title>", "Task spec title")
+    .option("--task-spec-intent <text>", "Task spec intent")
+    .option("--task-spec-scope <text>", "Task spec scope")
+    .option("--task-spec-acceptance <text>", "Task spec acceptance criteria")
+    .option("--task-spec-file <path>", "Read raw task spec snapshot")
+    .option("--codex-options <json>", "Session Codex options as JSON")
+    .action(
+      (
+        sessionId: string,
+        messageParts: string[],
+        opts: SessionFollowUpOptions,
+      ) =>
+        runAction(env, opts, async () => {
+          const initialMessage = await readContent(
+            env,
+            [opts.message, opts.prompt],
+            opts.file,
+            messageParts,
+          );
+          const taskSpecRaw = opts.taskSpecFile
+            ? await (env.readFile ?? readFile)(opts.taskSpecFile, "utf8")
+            : undefined;
+          const body = omitUndefined<StartFollowUpSessionRequest>({
+            workspace_id: opts.workspace,
+            initial_message: initialMessage,
+            task_spec: taskSpecRaw
+              ? omitUndefined({
+                  ref: opts.taskSpecRef,
+                  title: opts.taskSpecTitle,
+                  intent: opts.taskSpecIntent,
+                  scope: opts.taskSpecScope,
+                  acceptance_criteria: opts.taskSpecAcceptance,
+                  raw: taskSpecRaw,
+                })
+              : taskSpecFromOptions(opts),
+            codex_options: parseJsonOption(
+              opts.codexOptions,
+              "--codex-options",
+            ),
+          });
+          const result = await client(program, env).post(
+            `/sessions/${encodeURIComponent(sessionId)}/follow-up`,
+            body,
+          );
+          printResult(env, opts, result, () =>
+            formatFollowUpSessionStarted(
+              unwrapRecord(result, "session"),
+              stringField(asRecord(result), "previous_session_id") ?? sessionId,
+            ),
+          );
+        }),
     );
 
   jsonOption(session.command("inspect").description("Inspect a session"))
@@ -884,7 +967,14 @@ function parseJsonOption(
 }
 
 function taskSpecFromOptions(
-  opts: SessionStartOptions,
+  opts: Pick<
+    SessionStartOptions | SessionFollowUpOptions,
+    | "taskSpecRef"
+    | "taskSpecTitle"
+    | "taskSpecIntent"
+    | "taskSpecScope"
+    | "taskSpecAcceptance"
+  >,
 ): JsonObject | undefined {
   const taskSpec = omitUndefined({
     ref: opts.taskSpecRef,
@@ -1027,6 +1117,17 @@ function formatSessionStarted(record: Record<string, unknown> | null): string {
   const id = stringField(record, "id") ?? "(unknown id)";
   const status = stringField(record, "status");
   return status ? `Session ${id} started: ${status}` : `Session ${id} started`;
+}
+
+function formatFollowUpSessionStarted(
+  record: Record<string, unknown> | null,
+  previousSessionId: string,
+): string {
+  const id = stringField(record, "id") ?? "(unknown id)";
+  const status = stringField(record, "status");
+  return status
+    ? `Session ${id} started from ${previousSessionId}: ${status}`
+    : `Session ${id} started from ${previousSessionId}`;
 }
 
 function formatSessionStopped(

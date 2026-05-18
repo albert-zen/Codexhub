@@ -443,6 +443,65 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("starts follow-up sessions with previous-session JSON", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          session: {
+            id: "sess_2",
+            previous_session_id: "sess_1",
+            status: "awaiting_input",
+          },
+          previous_session_id: "sess_1",
+          previous_session: {
+            id: "sess_1",
+            status: "completed",
+          },
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "follow-up",
+      "sess_1",
+      "--workspace",
+      "work_2",
+      "--task-spec-title",
+      "Follow-up task",
+      "--codex-options",
+      '{"fake":true}',
+      "--json",
+      "Continue",
+      "fresh.",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/sessions/sess_1/follow-up");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      workspace_id: "work_2",
+      initial_message: "Continue fresh.",
+      task_spec: {
+        title: "Follow-up task",
+      },
+      codex_options: { fake: true },
+    });
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      session: {
+        id: "sess_2",
+        previous_session_id: "sess_1",
+      },
+      previous_session_id: "sess_1",
+    });
+  });
+
   it("creates worktree workspaces with repo path metadata", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const program = createProgram({
@@ -750,6 +809,7 @@ describe("codexhub commands", () => {
   it("documents unique short prefixes for session references", () => {
     const helpText = "Session ID, unique id prefix, or unique UUID prefix";
     expect(commandHelp("session", "inspect")).toContain(helpText);
+    expect(commandHelp("session", "follow-up")).toContain(helpText);
     expect(commandHelp("session", "send")).toContain(helpText);
     expect(commandHelp("run-group", "add-session")).toContain(helpText);
   });

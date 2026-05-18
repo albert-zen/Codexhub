@@ -79,6 +79,29 @@ describe("codexhub CLI smoke", () => {
     ]);
     expect(trace).toContain("[input initial");
     expect(trace).toContain("[agent #");
+
+    await runJson(["session", "stop", sessionId, "--json"]);
+    const followUp = await runJson([
+      "session",
+      "follow-up",
+      sessionId,
+      "--codex-options",
+      '{"fake":true}',
+      "--json",
+      "Continue from a fresh worker.",
+    ]);
+    const followUpSessionId = entityId(followUp, "session");
+    expect(followUpSessionId).not.toBe(sessionId);
+    expect(followUp.previous_session_id).toBe(sessionId);
+    expect(nested(followUp, "session", "previous_session_id")).toBe(sessionId);
+    expect(nested(followUp, "session", "status")).toBe("awaiting_input");
+
+    const followUpLatest = await runText([
+      "session",
+      "latest",
+      followUpSessionId,
+    ]);
+    expect(followUpLatest).toContain("Continue from a fresh worker.");
   });
 });
 

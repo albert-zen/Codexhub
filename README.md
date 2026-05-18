@@ -48,8 +48,9 @@ $Health = node apps/cli/dist/index.js health --json | ConvertFrom-Json
 Do not pipe plain `pnpm --filter @codexhub/cli dev -- ... --json` into a JSON
 parser; pnpm may print script banners before the CLI payload. If parsing fails
 after a side-effecting command such as `project create`, `workspace create`,
-`session start`, `session send`, or `run-group create`, inspect existing state
-before retrying so the manager does not create duplicates.
+`session start`, `session follow-up`, `session send`, or `run-group create`,
+inspect existing state before retrying so the manager does not create
+duplicates.
 
 ```powershell
 $Project = pnpm --silent --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json | ConvertFrom-Json
@@ -78,9 +79,9 @@ Session commands accept the canonical `sess_<uuid>` id, a unique leading prefix
 including `sess_`, or a unique leading prefix from only the UUID portion.
 Responses always keep canonical ids unchanged. Ambiguous prefixes fail with
 `session_id_ambiguous` and include `candidate_ids` in JSON error payloads.
-Side-effect commands such as `session send`, `session stop`,
-`session review-status set`, and `run-group add-session` refuse the request
-before changing state.
+Side-effect commands such as `session follow-up`, `session send`,
+`session stop`, `session review-status set`, and `run-group add-session` refuse
+the request before changing state.
 
 `session latest` and session list summaries report the last completed agent
 message. Streaming `item/agentMessage/delta` fragments remain available through
@@ -90,6 +91,20 @@ when `session latest --type all` is used.
 
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.
+
+Stopped, completed, and failed sessions do not have a live Codex process to
+message. Start a follow-up session to continue in a fresh worker. The follow-up
+keeps the previous session unchanged, records `previous_session_id`, defaults to
+the same workspace, and copies the prior task-spec metadata unless new metadata
+is supplied:
+
+```powershell
+$FollowUp = pnpm --silent --filter @codexhub/cli dev -- session follow-up $TerminalSessionId --message "Continue from the previous result and report status." --json | ConvertFrom-Json
+$FollowUp.session.previous_session_id
+```
+
+Pass `--workspace <workspace-id>` to run the follow-up in a different workspace
+from the same project.
 
 Workspace cleanup archives the workspace record by default. Add `--delete-files`
 only when you want Codexhub to remove the workspace directory after safety
@@ -160,6 +175,11 @@ not schedule workers or enforce quality gates.
 
 `/api/v1` is the canonical HTTP API prefix. Root routes such as `/sessions`
 remain supported local aliases for the CLI and GUI.
+
+Follow-up sessions are created with `POST /api/v1/sessions/:id/follow-up`.
+The request accepts `initial_message` or `prompt`, optional `workspace_id`,
+optional `task_spec`, and optional `codex_options`; the response includes the
+new `session` plus `previous_session_id`.
 
 ## Current non-goals
 

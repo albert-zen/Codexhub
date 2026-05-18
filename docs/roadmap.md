@@ -12,9 +12,10 @@ agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
 
 The current product step is improving the manager-facing reading and follow-up
 loop after the first orchestration metadata pass. Worktree workspaces, task spec
-metadata, run groups, and review-gate status now exist as first-pass control
-plane records. The next gaps are conversation-level transcript paging,
-terminal-session follow-up, clearer web actions, and batch dashboards.
+metadata, run groups, review-gate status, and terminal-session follow-up now
+exist as first-pass control plane records. The next gaps are clearer web
+actions, compact GUI creation/follow-up flows, structured review findings, and
+batch dashboards.
 
 ## V1 Outcome
 
@@ -46,6 +47,8 @@ The repository currently contains:
 - `apps/web` with a compact project/session/detail UI, readable transcript,
   item type filter, latest agent message, send steer/continue, stop, and
   complete actions.
+- Terminal sessions can start fresh follow-up worker sessions through API and
+  CLI without reviving stopped, completed, or failed Codex processes.
 - Docs for Symphony lessons, subagent operations, roadmap, task specs,
   review-gate workflow, and local issue/backlog synthesis.
 - Top-level `pnpm build`, `pnpm check`, `pnpm test`, and `pnpm format` scripts
@@ -67,8 +70,6 @@ The following work remains open next:
   follow-up instead of sending to a dead session (`#21`).
 - Keep roadmap and local issue docs synchronized with the closed baseline and
   next backlog (`#22`).
-- Start follow-up sessions from stopped, completed, or failed sessions without
-  reviving dead Codex processes (`#23`).
 - Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
 - Persist structured review findings and worker responses as observability, not
   a validation gate (`#25`).
@@ -159,6 +160,7 @@ the first CLI/web pass:
 - `GET /workspaces`
 - `GET /workspaces/:id`
 - `POST /sessions`
+- `POST /sessions/:id/follow-up`
 - `GET /sessions`
 - `GET /sessions/:id`
 - `POST /sessions/:id/messages`

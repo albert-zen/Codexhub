@@ -34,7 +34,9 @@ Use it to:
 7. Use `session items` only when raw item detail is needed.
 8. Send `steer` while the worker is running.
 9. Send `continue` after the worker is awaiting input.
-10. Stop only when the worker should be interrupted.
+10. Start `session follow-up` when work must continue from a stopped,
+    completed, or failed session.
+11. Stop only when the worker should be interrupted.
 
 Always send meaningful message content. Do not use empty continue messages.
 
@@ -56,9 +58,9 @@ pnpm --silent --filter @codexhub/cli dev -- session trace <session_id> --after <
 
 Do not pipe plain `pnpm --filter @codexhub/cli dev -- ... --json` into
 `ConvertFrom-Json`, `jq`, or another JSON parser. If parsing fails after a
-side-effecting command such as creating a project, workspace, session, message,
-or run group, inspect existing Codexhub state before retrying so the manager
-does not duplicate the side effect.
+side-effecting command such as creating a project, workspace, session,
+follow-up session, message, or run group, inspect existing Codexhub state before
+retrying so the manager does not duplicate the side effect.
 
 ## Task Specs
 
@@ -199,6 +201,18 @@ Mode expectations:
 - `continue`: explicit next instruction after `awaiting_input`.
 
 Do not rely on the worker to infer intent from an empty message.
+
+Stopped, completed, and failed sessions cannot be messaged because Codexhub does
+not revive dead Codex processes. Start a fresh related session instead:
+
+```powershell
+codexhub session follow-up <terminal_session_id> --message "Continue from the previous result and report status." --json
+```
+
+The follow-up defaults to the previous workspace, can use `--workspace
+<workspace_id>` for another workspace in the same project, records
+`previous_session_id`, and copies the previous task-spec metadata unless new
+task-spec options are supplied.
 
 ## Review Loop
 

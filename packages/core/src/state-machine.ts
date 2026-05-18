@@ -25,3 +25,7 @@ export function statusAfterSendMessage(
 export function isTerminalStatus(status: WorkerSessionStatus): boolean {
   return status === "completed" || status === "failed" || status === "stopped";
 }
+
+export function canStartFollowUpSession(status: WorkerSessionStatus): boolean {
+  return isTerminalStatus(status);
+}

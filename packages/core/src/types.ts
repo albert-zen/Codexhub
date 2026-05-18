@@ -74,6 +74,7 @@ export interface WorkerSession {
   id: ID;
   project_id: ID;
   workspace_id: ID;
+  previous_session_id: ID | null;
   status: WorkerSessionStatus;
   codex_thread_id: string | null;
   codex_turn_id: string | null;

@@ -165,6 +165,17 @@ const migrations: Migration[] = [
       CREATE INDEX idx_run_group_sessions_session_id ON run_group_sessions(session_id);
     `,
   },
+  {
+    version: 5,
+    name: "worker_session_followups",
+    sql: `
+      ALTER TABLE worker_sessions
+        ADD COLUMN previous_session_id TEXT REFERENCES worker_sessions(id) ON DELETE SET NULL;
+
+      CREATE INDEX idx_worker_sessions_previous_session_id
+        ON worker_sessions(previous_session_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

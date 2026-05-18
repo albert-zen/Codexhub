@@ -58,6 +58,16 @@ export interface StartSessionRequest {
   codex_options?: unknown | undefined;
 }
 
+export interface StartFollowUpSessionRequest {
+  workspace_id?: string | null | undefined;
+  prompt?: string | undefined;
+  initial_message?: string | undefined;
+  task_spec?: CreateTaskSpecMetadataRequest | null | undefined;
+  codex_options?: unknown | undefined;
+  sender_type?: SenderType | undefined;
+  sender_id?: string | null | undefined;
+}
+
 export interface CreateRunGroupRequest {
   name: string;
   project_id?: string | null | undefined;
@@ -156,6 +166,11 @@ export interface SessionResponse {
   session: WorkerSession;
   workspace?: Workspace;
   task_spec?: TaskSpecMetadata | null;
+}
+
+export interface FollowUpSessionResponse extends SessionResponse {
+  previous_session_id: string;
+  previous_session: WorkerSession;
 }
 
 export interface ItemListResponse extends Page<Item> {

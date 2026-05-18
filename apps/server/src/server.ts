@@ -7,7 +7,7 @@ import type {
   TranscriptPageOptions,
   WorkerSession,
 } from "@codexhub/core";
-import { isTerminalStatus } from "@codexhub/core";
+import { canStartFollowUpSession, isTerminalStatus } from "@codexhub/core";
 import { openDatabase, type CodexHubDatabase } from "./database.js";
 import {
   HubRepository,
@@ -303,6 +303,82 @@ function registerApiRoutes(
       codexOptions: body.codex_options ?? project.default_codex_options,
     });
     return { session: started, workspace };
+  });
+
+  app.post(path("/sessions/:id/follow-up"), async (request) => {
+    const previousSession = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    if (!canStartFollowUpSession(previousSession.status)) {
+      throw new HttpError(
+        409,
+        "session_not_terminal",
+        `session is ${previousSession.status}; follow-up sessions require a stopped, completed, or failed source session`,
+      );
+    }
+
+    const body = asRecord(request.body);
+    const workspaceId =
+      optionalString(body, "workspace_id") ??
+      optionalString(body, "workspace") ??
+      previousSession.workspace_id;
+    const workspace = state.repo.getWorkspace(workspaceId);
+    if (!workspace)
+      throw new HttpError(404, "workspace_not_found", "workspace not found");
+    if (workspace.project_id !== previousSession.project_id) {
+      throw new HttpError(
+        400,
+        "workspace_project_mismatch",
+        "follow-up workspace must belong to the previous session project",
+      );
+    }
+
+    const project = state.repo.getProject(previousSession.project_id);
+    if (!project)
+      throw new HttpError(404, "project_not_found", "project not found");
+    const prompt =
+      optionalString(body, "initial_message") ?? optionalString(body, "prompt");
+    if (!prompt || prompt.trim() === "") {
+      throw new HttpError(
+        400,
+        "prompt_required",
+        "initial_message or prompt is required",
+      );
+    }
+
+    const session = state.repo.createSession({
+      project_id: previousSession.project_id,
+      workspace_id: workspace.id,
+      previous_session_id: previousSession.id,
+    });
+    const previousTaskSpec = state.repo.getTaskSpec(previousSession.id);
+    const taskSpec =
+      parseTaskSpec(optionalRecord(body, "task_spec")) ??
+      copyTaskSpec(previousTaskSpec);
+    if (taskSpec) {
+      state.repo.createTaskSpec({ session_id: session.id, ...taskSpec });
+    }
+    const message = state.repo.createMessage({
+      session_id: session.id,
+      mode: "initial",
+      content: prompt,
+      sender_type:
+        parseSenderType(optionalString(body, "sender_type")) ?? "manager_agent",
+      sender_id: optionalString(body, "sender_id"),
+    });
+
+    const started = await state.runtime.startSession(session, workspace, {
+      initialMessage: message,
+      codexOptions: body.codex_options ?? project.default_codex_options,
+    });
+    return {
+      session: started,
+      previous_session_id: previousSession.id,
+      previous_session: previousSession,
+      workspace,
+      task_spec: state.repo.getTaskSpec(session.id),
+    };
   });
 
   app.get(path("/sessions"), async (request) => {
@@ -804,6 +880,20 @@ function parseTaskSpec(
     (value) => typeof value === "string" && value.trim() !== "",
   );
   return hasValue ? taskSpec : null;
+}
+
+function copyTaskSpec(
+  taskSpec: import("@codexhub/core").TaskSpecMetadata | null,
+): Omit<CreateTaskSpecInput, "session_id"> | null {
+  if (!taskSpec) return null;
+  return {
+    ref: taskSpec.ref,
+    title: taskSpec.title,
+    intent: taskSpec.intent,
+    scope: taskSpec.scope,
+    acceptance_criteria: taskSpec.acceptance_criteria,
+    raw: taskSpec.raw,
+  };
 }
 
 function optionalNullableString(

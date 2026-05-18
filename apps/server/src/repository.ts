@@ -48,6 +48,7 @@ export interface CreateRunGroupInput {
 export interface CreateSessionInput {
   project_id: string;
   workspace_id: string;
+  previous_session_id?: string | null;
 }
 
 export interface CreateTaskSpecInput {
@@ -330,6 +331,7 @@ export class HubRepository {
       id: id("sess"),
       project_id: input.project_id,
       workspace_id: input.workspace_id,
+      previous_session_id: input.previous_session_id ?? null,
       status: "starting",
       codex_thread_id: null,
       codex_turn_id: null,
@@ -349,16 +351,18 @@ export class HubRepository {
     this.db
       .prepare(
         `INSERT INTO worker_sessions (
-          id, project_id, workspace_id, status, codex_thread_id, codex_turn_id,
-          codex_session_key, process_pid, last_agent_message_item_id,
-          last_agent_message, last_agent_message_at, last_item_sequence,
-          failure_reason, started_at, ended_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, project_id, workspace_id, previous_session_id, status,
+          codex_thread_id, codex_turn_id, codex_session_key, process_pid,
+          last_agent_message_item_id, last_agent_message,
+          last_agent_message_at, last_item_sequence, failure_reason,
+          started_at, ended_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         session.id,
         session.project_id,
         session.workspace_id,
+        session.previous_session_id,
         session.status,
         session.codex_thread_id,
         session.codex_turn_id,
@@ -1245,6 +1249,7 @@ function sessionFromRow(row: unknown): WorkerSession {
     id: requiredString(record, "id"),
     project_id: requiredString(record, "project_id"),
     workspace_id: requiredString(record, "workspace_id"),
+    previous_session_id: string(record, "previous_session_id"),
     status: requiredString(record, "status") as WorkerSession["status"],
     codex_thread_id: string(record, "codex_thread_id"),
     codex_turn_id: string(record, "codex_turn_id"),

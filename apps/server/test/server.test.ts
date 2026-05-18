@@ -236,6 +236,151 @@ describe("Codexhub API", () => {
     });
   });
 
+  it.each(["stopped", "completed", "failed"] as const)(
+    "starts a follow-up session from a %s source session",
+    async (status) => {
+      const dbPath = join(tempDir, `follow-up-${status}.sqlite`);
+      const database = openDatabase({ path: dbPath });
+      const seeded = (() => {
+        const repo = new HubRepository(database.db);
+        const project = repo.createProject({
+          name: `follow-up-${status}`,
+          default_codex_options: { fake: true },
+        });
+        const sourceWorkspace = repo.createWorkspace({
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, `follow-up-${status}-source`),
+          cwd: join(tempDir, `follow-up-${status}-source`),
+        });
+        const targetWorkspace = repo.createWorkspace({
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, `follow-up-${status}-target`),
+          cwd: join(tempDir, `follow-up-${status}-target`),
+        });
+        const previous = repo.createSession({
+          project_id: project.id,
+          workspace_id: sourceWorkspace.id,
+        });
+        repo.createTaskSpec({
+          session_id: previous.id,
+          ref: "https://github.com/albert-zen/Codexhub/issues/23",
+          title: "Terminal follow-up",
+          intent: "Continue work without reviving a dead process.",
+          acceptance_criteria: "A new session records previous_session_id.",
+        });
+        repo.updateSession(previous.id, {
+          status,
+          process_pid: `pid-${status}`,
+          failure_reason: status === "failed" ? "already failed" : null,
+          ended_at: new Date().toISOString(),
+        });
+        return {
+          previousSessionId: previous.id,
+          sourceWorkspaceId: sourceWorkspace.id,
+          targetWorkspaceId: targetWorkspace.id,
+        };
+      })();
+      database.close();
+      const { previousSessionId, sourceWorkspaceId, targetWorkspaceId } =
+        seeded;
+
+      const seededServer = await createServer({ dbPath, logger: false });
+      try {
+        const requestedWorkspaceId =
+          status === "completed" ? targetWorkspaceId : undefined;
+        const payload: Record<string, unknown> = {
+          initial_message: `Follow up after ${status}.`,
+        };
+        if (requestedWorkspaceId) payload.workspace_id = requestedWorkspaceId;
+
+        const response = await seededServer.inject({
+          method: "POST",
+          url: `/api/v1/sessions/${previousSessionId}/follow-up`,
+          payload,
+        });
+        expect(response.statusCode).toBe(200);
+        const body = response.json();
+        const followUpSessionId = body.session.id;
+        const expectedWorkspaceId = requestedWorkspaceId ?? sourceWorkspaceId;
+
+        expect(followUpSessionId).not.toBe(previousSessionId);
+        expect(body.previous_session_id).toBe(previousSessionId);
+        expect(body.previous_session.id).toBe(previousSessionId);
+        expect(body.session).toMatchObject({
+          id: followUpSessionId,
+          previous_session_id: previousSessionId,
+          workspace_id: expectedWorkspaceId,
+          status: "awaiting_input",
+        });
+        expect(body.workspace.id).toBe(expectedWorkspaceId);
+        expect(body.task_spec).toMatchObject({
+          session_id: followUpSessionId,
+          ref: "https://github.com/albert-zen/Codexhub/issues/23",
+          title: "Terminal follow-up",
+        });
+        expect(body.session.last_agent_message).toContain(
+          `Follow up after ${status}.`,
+        );
+
+        const previous = await getFrom(
+          seededServer,
+          `/api/v1/sessions/${previousSessionId}`,
+        );
+        expect(previous.session).toMatchObject({
+          id: previousSessionId,
+          status,
+          previous_session_id: null,
+          process_pid: `pid-${status}`,
+        });
+        expect(previous.session.failure_reason).toBe(
+          status === "failed" ? "already failed" : null,
+        );
+
+        const followUpMessages = await getFrom(
+          seededServer,
+          `/api/v1/sessions/${followUpSessionId}/messages`,
+        );
+        expect(followUpMessages.messages).toHaveLength(1);
+        expect(followUpMessages.messages[0]).toMatchObject({
+          session_id: followUpSessionId,
+          mode: "initial",
+          content: `Follow up after ${status}.`,
+          status: "sent",
+        });
+      } finally {
+        await seededServer.close();
+      }
+    },
+  );
+
+  it("rejects follow-up sessions from non-terminal source sessions", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "active-follow-up-demo",
+      default_workspace_root: tempDir,
+    });
+    const started = await createFakeSession(
+      project.project.id,
+      "active-follow-up",
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${started.session.id}/follow-up`,
+      payload: {
+        initial_message: "This must not start a new session.",
+        codex_options: { fake: true },
+      },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error.code).toBe("session_not_terminal");
+
+    const sessions = await get("/api/v1/sessions");
+    expect(sessions.sessions).toHaveLength(1);
+    expect(sessions.sessions[0].id).toBe(started.session.id);
+  });
+
   it("refuses ambiguous short session prefixes before side effects", async () => {
     const project = await post("/api/v1/projects", {
       name: "ambiguous-prefix-demo",

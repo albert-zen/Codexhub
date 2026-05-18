@@ -25,6 +25,20 @@ pnpm --filter @codexhub/web dev
 
 The GUI defaults to `http://127.0.0.1:4318`.
 
+Optional runtime supervisor mode keeps worker process ownership outside the API
+server so API hot reloads can reconnect to still-live supervised sessions. Run
+the supervisor separately on its default `http://127.0.0.1:4319`, then opt the
+API server in with an explicit URL:
+
+```powershell
+pnpm --filter @codexhub/server dev:runtime-supervisor
+$env:CODEXHUB_RUNTIME_SUPERVISOR_URL = "http://127.0.0.1:4319"
+pnpm --filter @codexhub/server dev
+```
+
+Use the same `CODEXHUB_DB_PATH` for both processes when overriding the default
+database path.
+
 ## CLI example
 
 The CLI defaults to `http://127.0.0.1:4317`. Use `--json` for Manager Agent
@@ -106,12 +120,15 @@ $FollowUp.session.previous_session_id
 Pass `--workspace <workspace-id>` to run the follow-up in a different workspace
 from the same project.
 
-Server hot reloads can also orphan `starting`, `running`, or `awaiting_input`
-session records because the HTTP server owns the Codex process stdio handles.
-On startup, Codexhub marks those rows `failed` instead of pretending it can
-reattach. If a send finds a non-terminal row without a live process, the API
-returns `session_process_unavailable` with a `follow_up_endpoint` for starting a
-fresh related session.
+Without `CODEXHUB_RUNTIME_SUPERVISOR_URL`, server hot reloads can orphan
+`starting`, `running`, or `awaiting_input` session records because the HTTP
+server owns the Codex process stdio handles. On startup, Codexhub marks those
+rows `failed` instead of pretending it can reattach. With the external runtime
+supervisor enabled, API restarts can continue sessions only while the supervisor
+stays alive and proves the session is still managed. If a send finds a
+non-terminal row without a live process, the API returns
+`session_process_unavailable` with a `follow_up_endpoint` for starting a fresh
+related session.
 
 Workspace cleanup archives the workspace record by default. Add `--delete-files`
 only when you want Codexhub to remove the workspace directory after safety

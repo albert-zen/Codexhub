@@ -8,7 +8,9 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "dogfood:smoke": "pnpm --filter @codexhub/core build && tsc -p tsconfig.json && node dist/dogfood-smoke.js",
     "dev": "tsx watch src/index.ts",
+    "dev:runtime-supervisor": "tsx watch src/runtime-supervisor-index.ts",
     "start": "node dist/index.js",
+    "start:runtime-supervisor": "node dist/runtime-supervisor-index.js",
     "test": "vitest run"
   },
   "dependencies": {

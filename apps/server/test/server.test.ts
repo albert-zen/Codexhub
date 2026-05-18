@@ -9,11 +9,13 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { AddressInfo } from "node:net";
 import type {
   WorkerSession,
   WorkerSessionStatus,
   Workspace,
 } from "@codexhub/core";
+import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/database.js";
 import { HubRepository } from "../src/repository.js";
@@ -25,6 +27,7 @@ import {
   type SendOptions,
   type StartOptions,
 } from "../src/runtime.js";
+import { createRuntimeSupervisorServer } from "../src/runtime-supervisor.js";
 import { createServer } from "../src/server.js";
 
 type App = Awaited<ReturnType<typeof createServer>>;
@@ -2082,6 +2085,252 @@ describe("Codexhub API", () => {
     }
   });
 
+  it("continues a fake session through an external runtime supervisor across API server restart", async () => {
+    const dbPath = join(tempDir, "external-runtime-supervisor.sqlite");
+    const supervisor = await createRuntimeSupervisorServer({
+      dbPath,
+      logger: false,
+    });
+    await supervisor.listen({ host: "127.0.0.1", port: 0 });
+
+    let api: App | null = await createServer({
+      dbPath,
+      logger: false,
+      runtimeSupervisorUrl: listenedBaseUrl(supervisor),
+    });
+
+    try {
+      const projectResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/projects",
+        payload: {
+          name: "external-supervisor",
+          default_workspace_root: tempDir,
+        },
+      });
+      expect(projectResponse.statusCode).toBe(200);
+      const project = projectResponse.json().project;
+
+      const workspaceResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/workspaces",
+        payload: {
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, "external-supervisor-workspace"),
+        },
+      });
+      expect(workspaceResponse.statusCode).toBe(200);
+      const workspace = workspaceResponse.json().workspace;
+
+      const startResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/sessions",
+        payload: {
+          workspace_id: workspace.id,
+          initial_message: "Start through the external supervisor.",
+          sender_type: "manager_agent",
+          codex_options: { fake: true },
+        },
+      });
+      expect(startResponse.statusCode).toBe(200);
+      const sessionId = startResponse.json().session.id;
+
+      await api.close();
+      api = null;
+
+      api = await createServer({
+        dbPath,
+        logger: false,
+        runtimeSupervisorUrl: listenedBaseUrl(supervisor),
+      });
+
+      const preserved = await getFrom(api, `/api/v1/sessions/${sessionId}`);
+      expect(preserved.session).toMatchObject({
+        id: sessionId,
+        status: "awaiting_input",
+        process_pid: "fake",
+        failure_reason: null,
+        ended_at: null,
+      });
+
+      const continueResponse = await api.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${sessionId}/messages`,
+        payload: {
+          mode: "continue",
+          content: "Continue after the API server restarted.",
+          sender_type: "manager_agent",
+        },
+      });
+      expect(continueResponse.statusCode).toBe(200);
+      expect(continueResponse.json()).toMatchObject({
+        message: {
+          session_id: sessionId,
+          mode: "continue",
+          status: "sent",
+          codex_request_id: "fake",
+        },
+        session: {
+          id: sessionId,
+          status: "awaiting_input",
+          process_pid: "fake",
+          last_agent_message:
+            "Fake Codex worker received: Continue after the API server restarted.",
+        },
+      });
+    } finally {
+      if (api) await api.close();
+      await supervisor.close();
+    }
+  });
+
+  it("returns structured unavailable fallback when an external supervisor disappears before send", async () => {
+    const dbPath = join(tempDir, "external-supervisor-unavailable.sqlite");
+    const supervisor = await createRuntimeSupervisorServer({
+      dbPath,
+      logger: false,
+    });
+    await supervisor.listen({ host: "127.0.0.1", port: 0 });
+    const runtimeSupervisorUrl = listenedBaseUrl(supervisor);
+    let supervisorClosed = false;
+
+    const api = await createServer({
+      dbPath,
+      logger: false,
+      runtimeSupervisorUrl,
+    });
+
+    try {
+      const projectResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/projects",
+        payload: {
+          name: "external-supervisor-unavailable",
+          default_workspace_root: tempDir,
+        },
+      });
+      expect(projectResponse.statusCode).toBe(200);
+      const project = projectResponse.json().project;
+
+      const workspaceResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/workspaces",
+        payload: {
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, "external-supervisor-unavailable-workspace"),
+        },
+      });
+      expect(workspaceResponse.statusCode).toBe(200);
+      const workspace = workspaceResponse.json().workspace;
+
+      const startResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/sessions",
+        payload: {
+          workspace_id: workspace.id,
+          initial_message: "Start before the supervisor exits.",
+          sender_type: "manager_agent",
+          codex_options: { fake: true },
+        },
+      });
+      expect(startResponse.statusCode).toBe(200);
+      const sessionId = startResponse.json().session.id;
+
+      await supervisor.close();
+      supervisorClosed = true;
+
+      const response = await api.inject({
+        method: "POST",
+        url: `/api/v1/sessions/${sessionId}/messages`,
+        payload: {
+          mode: "continue",
+          content: "Try to continue after supervisor exit.",
+          sender_type: "manager_agent",
+        },
+      });
+      const body = response.json();
+      expect(response.statusCode).toBe(409);
+      expect(body.error).toMatchObject({
+        code: "session_process_unavailable",
+        session_id: sessionId,
+        follow_up_available: true,
+        follow_up_endpoint: `/api/v1/sessions/${sessionId}/follow-up`,
+      });
+      expect(body.error.message).toContain("runtime supervisor is unavailable");
+
+      const failed = await getFrom(api, `/api/v1/sessions/${sessionId}`);
+      expect(failed.session.status).toBe("failed");
+      expect(failed.session.failure_reason).toContain(
+        "runtime supervisor is unavailable",
+      );
+      expect(failed.session.process_pid).toBeNull();
+      expect(failed.session.ended_at).toEqual(expect.any(String));
+    } finally {
+      await api.close();
+      if (!supervisorClosed) await supervisor.close();
+    }
+  });
+
+  it("treats invalid successful supervisor responses as upstream failures", async () => {
+    const invalidSupervisor = Fastify({ logger: false });
+    invalidSupervisor.post("/runtime/sessions/start", async (_request, reply) =>
+      reply.type("text/plain").send("not json"),
+    );
+    await invalidSupervisor.listen({ host: "127.0.0.1", port: 0 });
+
+    const api = await createServer({
+      dbPath: join(tempDir, "invalid-supervisor-response.sqlite"),
+      logger: false,
+      runtimeSupervisorUrl: listenedBaseUrl(invalidSupervisor),
+    });
+
+    try {
+      const projectResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/projects",
+        payload: {
+          name: "invalid-supervisor-response",
+          default_workspace_root: tempDir,
+        },
+      });
+      expect(projectResponse.statusCode).toBe(200);
+      const project = projectResponse.json().project;
+
+      const workspaceResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/workspaces",
+        payload: {
+          project_id: project.id,
+          source_type: "local",
+          path: join(tempDir, "invalid-supervisor-response-workspace"),
+        },
+      });
+      expect(workspaceResponse.statusCode).toBe(200);
+      const workspace = workspaceResponse.json().workspace;
+
+      const startResponse = await api.inject({
+        method: "POST",
+        url: "/api/v1/sessions",
+        payload: {
+          workspace_id: workspace.id,
+          initial_message: "Start against invalid supervisor response.",
+          sender_type: "manager_agent",
+          codex_options: { fake: true },
+        },
+      });
+      expect(startResponse.statusCode).toBe(502);
+      expect(startResponse.json().error).toMatchObject({
+        code: "runtime_supervisor_unavailable",
+      });
+      expect(startResponse.json().error.message).toContain("invalid JSON");
+    } finally {
+      await api.close();
+      await invalidSupervisor.close();
+    }
+  });
+
   it.each(["continue", "steer"] as const)(
     "fails a %s send to an awaiting session without a live process",
     async (mode) => {
@@ -2288,6 +2537,16 @@ async function getFrom(instance: App, url: string): Promise<any> {
   const response = await instance.inject({ method: "GET", url });
   expect(response.statusCode).toBe(200);
   return response.json();
+}
+
+function listenedBaseUrl(instance: {
+  server: { address(): string | AddressInfo | null };
+}): string {
+  const address = instance.server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("expected supervisor to listen on a TCP address");
+  }
+  return `http://127.0.0.1:${address.port}`;
 }
 
 function requiredSeeded(

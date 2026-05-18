@@ -28,12 +28,17 @@ import {
   SessionProcessUnavailableError,
   type CodexRuntimeController,
 } from "./runtime.js";
+import {
+  RuntimeSupervisorUnavailableError,
+  SupervisorRuntimeClient,
+} from "./runtime-supervisor.js";
 import { cleanupWorkspace } from "./workspace-cleanup.js";
 import { buildWorkspace } from "./workspace-builder.js";
 
 export interface CreateServerOptions {
   dbPath?: string;
   logger?: boolean;
+  runtimeSupervisorUrl?: string;
   runtimeFactory?: (repo: HubRepository) => CodexRuntimeController;
 }
 
@@ -49,7 +54,11 @@ export async function createServer(options: CreateServerOptions = {}) {
 
   const database = openDatabase({ path: options.dbPath });
   const repo = new HubRepository(database.db);
-  const runtime = options.runtimeFactory?.(repo) ?? new CodexRuntime(repo);
+  const runtime =
+    options.runtimeFactory?.(repo) ??
+    (options.runtimeSupervisorUrl
+      ? new SupervisorRuntimeClient(repo, options.runtimeSupervisorUrl)
+      : new CodexRuntime(repo));
   const state: ServerState = { database, repo, runtime };
   await reconcileUnavailableRuntimeSessions(app, repo, runtime);
 
@@ -58,6 +67,12 @@ export async function createServer(options: CreateServerOptions = {}) {
     if (err instanceof HttpError) {
       return reply.status(err.statusCode).send({
         error: { code: err.code, message: err.message, ...err.details },
+        message: err.message,
+      });
+    }
+    if (err instanceof RuntimeSupervisorUnavailableError) {
+      return reply.status(err.statusCode ?? 503).send({
+        error: { code: err.code, message: err.message },
         message: err.message,
       });
     }
@@ -633,7 +648,7 @@ function registerApiRoutes(
       state.repo,
       requiredString(asRecord(request.params), "id"),
     );
-    state.runtime.stopSession(session.id);
+    await state.runtime.stopSession(session.id);
     return { session: requireSession(state.repo, session.id) };
   });
 
@@ -642,7 +657,7 @@ function registerApiRoutes(
       state.repo,
       requiredString(asRecord(request.params), "id"),
     );
-    return { session: state.runtime.completeSession(session.id) };
+    return { session: await state.runtime.completeSession(session.id) };
   });
 
   app.get(path("/sessions/:id/items"), async (request) => {

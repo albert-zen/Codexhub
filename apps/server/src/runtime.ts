@@ -34,8 +34,8 @@ export interface CodexRuntimeController {
     workspace: Workspace,
     options: SendOptions,
   ): Promise<WorkerSession>;
-  stopSession(sessionId: string): void;
-  completeSession(sessionId: string): WorkerSession;
+  stopSession(sessionId: string): void | Promise<void>;
+  completeSession(sessionId: string): WorkerSession | Promise<WorkerSession>;
   shutdownAll(): Promise<void>;
 }
 
@@ -72,12 +72,16 @@ const DEFAULT_RESPONSE_TIMEOUT_MS = 30_000;
 
 export class CodexRuntime implements CodexRuntimeController {
   private readonly managed = new Map<string, ManagedSession>();
+  private readonly fakeSessions = new Set<string>();
 
   constructor(private readonly repo: HubRepository) {}
 
   hasLiveSession(session: WorkerSession): boolean {
     const managed = this.managed.get(session.id);
-    return managed !== undefined && !managed.stopped && !managed.process.killed;
+    return (
+      (managed !== undefined && !managed.stopped && !managed.process.killed) ||
+      this.fakeSessions.has(session.id)
+    );
   }
 
   async startSession(
@@ -194,8 +198,7 @@ export class CodexRuntime implements CodexRuntimeController {
 
     if (
       process.env.CODEXHUB_FAKE_CODEX === "1" ||
-      session.process_pid === "fake" ||
-      session.codex_thread_id === "fake-thread"
+      this.fakeSessions.has(session.id)
     ) {
       return this.runFakeTurn(session.id, options.message);
     }
@@ -259,6 +262,7 @@ export class CodexRuntime implements CodexRuntimeController {
       managed.stopped = true;
       this.stopManaged(sessionId);
     }
+    this.fakeSessions.delete(sessionId);
     this.repo.updateSession(sessionId, {
       status: "stopped",
       ended_at: new Date().toISOString(),
@@ -267,6 +271,7 @@ export class CodexRuntime implements CodexRuntimeController {
 
   completeSession(sessionId: string): WorkerSession {
     this.stopManaged(sessionId);
+    this.fakeSessions.delete(sessionId);
     return this.repo.updateSession(sessionId, {
       status: "completed",
       ended_at: new Date().toISOString(),
@@ -277,6 +282,7 @@ export class CodexRuntime implements CodexRuntimeController {
     for (const sessionId of [...this.managed.keys()]) {
       this.stopManaged(sessionId);
     }
+    this.fakeSessions.clear();
   }
 
   private async startTurn(
@@ -307,6 +313,7 @@ export class CodexRuntime implements CodexRuntimeController {
     sessionId: string,
     message: Message,
   ): Promise<WorkerSession> {
+    this.fakeSessions.add(sessionId);
     this.repo.markMessageSent(message.id, "fake");
     this.repo.updateSession(sessionId, {
       status: "running",
@@ -512,10 +519,11 @@ export class CodexRuntime implements CodexRuntimeController {
 export class SessionProcessUnavailableError extends Error {
   readonly code = "session_process_unavailable";
 
-  constructor(readonly sessionId: string) {
-    super(
-      "session does not have a live Codex app-server process in this server process; start a follow-up session",
-    );
+  constructor(
+    readonly sessionId: string,
+    message = "session does not have a live Codex app-server process in this server process; start a follow-up session",
+  ) {
+    super(message);
     this.name = "SessionProcessUnavailableError";
   }
 }

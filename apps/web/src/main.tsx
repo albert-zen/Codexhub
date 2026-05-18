@@ -4,10 +4,10 @@ import type {
   ID,
   Item,
   ItemType,
-  Message,
   MessageMode,
   Project,
   TaskSpecMetadata,
+  TranscriptEntry,
   WorkerSession,
   WorkerSessionStatus,
 } from "@codexhub/core";
@@ -27,41 +27,23 @@ interface ItemPage {
   type: string;
 }
 
+interface TranscriptPage {
+  entries: TranscriptEntry[];
+  next_cursor: string | null;
+  limit: number;
+}
+
 interface SessionDetail {
   session: WorkerSession;
   task_spec: TaskSpecMetadata | null;
 }
 
-type TranscriptEntry =
-  | {
-      kind: "message";
-      id: string;
-      at: string;
-      sortTime: number;
-      sortIndex: number;
-      message: Message;
-    }
-  | {
-      kind: "agent";
-      id: string;
-      at: string;
-      sortTime: number;
-      sortIndex: number;
-      sequenceStart: number;
-      sequenceEnd: number;
-      method: string | null;
-      codexItemId: string | null;
-      text: string;
-      items: Item[];
-    }
-  | {
-      kind: "item";
-      id: string;
-      at: string;
-      sortTime: number;
-      sortIndex: number;
-      item: Item;
-    };
+interface LoadDetailOptions {
+  transcriptAfter: number | null;
+  rawItemType: ItemType | "all";
+  rawItemAfter: number | null;
+  includeRawItems: boolean;
+}
 
 const API_BASE = (
   import.meta.env.VITE_CODEXHUB_API ?? "http://127.0.0.1:4317"
@@ -76,6 +58,7 @@ const ITEM_TYPES: Array<ItemType | "all"> = [
   "reasoning",
   "raw",
 ];
+const TRANSCRIPT_PAGE_LIMIT = 50;
 const ITEM_PAGE_LIMIT = 50;
 
 class ApiError extends Error {
@@ -190,6 +173,37 @@ async function fetchSession(sessionId: ID): Promise<SessionDetail> {
   };
 }
 
+async function fetchTranscript(
+  sessionId: ID,
+  afterSequence: number | null,
+): Promise<TranscriptPage> {
+  const query = queryString({
+    limit: TRANSCRIPT_PAGE_LIMIT,
+    after_sequence: afterSequence,
+  });
+  const nestedPath = `/sessions/${encodeURIComponent(sessionId)}/transcript${query}`;
+  const flatPath = `/transcript${queryString({
+    session_id: sessionId,
+    limit: TRANSCRIPT_PAGE_LIMIT,
+    after_sequence: afterSequence,
+  })}`;
+  const body = await withFallback(
+    () => request<unknown>(nestedPath),
+    () => request<unknown>(flatPath),
+  );
+  return {
+    entries: listFrom<TranscriptEntry>(body, "transcript"),
+    next_cursor:
+      isObject(body) && typeof body.next_cursor === "string"
+        ? body.next_cursor
+        : null,
+    limit:
+      isObject(body) && typeof body.limit === "number"
+        ? body.limit
+        : TRANSCRIPT_PAGE_LIMIT,
+  };
+}
+
 async function fetchItems(
   sessionId: ID,
   type: ItemType | "all",
@@ -223,13 +237,6 @@ async function fetchItems(
         : ITEM_PAGE_LIMIT,
     type: isObject(body) && typeof body.type === "string" ? body.type : type,
   };
-}
-
-async function fetchMessages(sessionId: ID): Promise<Message[]> {
-  const body = await request<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}/messages`,
-  );
-  return listFrom<Message>(body, "messages");
 }
 
 async function sendMessage(
@@ -301,104 +308,62 @@ function displayJson(value: unknown): string {
   }
 }
 
-function timeValue(value: string): number {
-  const time = new Date(value).getTime();
-  return Number.isNaN(time) ? 0 : time;
+function messageTitle(mode: MessageMode | null): string {
+  if (mode === "initial") return "Initial Prompt";
+  if (mode === "continue") return "Continue";
+  if (mode === "steer") return "Steer";
+  return "Message";
 }
 
-function buildTranscript(
-  messages: Message[],
-  items: Item[],
-): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-  const agentGroups = new Map<
-    string,
-    Extract<TranscriptEntry, { kind: "agent" }>
-  >();
-
-  for (const item of [...items].sort((a, b) => a.sequence - b.sequence)) {
-    if (item.type !== "agentmessage") {
-      entries.push({
-        kind: "item",
-        id: `item:${item.id}`,
-        at: item.created_at,
-        sortTime: timeValue(item.created_at),
-        sortIndex: item.sequence,
-        item,
-      });
-      continue;
-    }
-
-    const key = item.codex_item_id ?? item.id;
-    const existing = agentGroups.get(key);
-    const text = item.text_excerpt ?? "";
-    if (existing) {
-      existing.items.push(item);
-      existing.at = item.created_at;
-      existing.sortTime = Math.min(
-        existing.sortTime,
-        timeValue(item.created_at),
-      );
-      existing.sequenceStart = Math.min(existing.sequenceStart, item.sequence);
-      existing.sequenceEnd = Math.max(existing.sequenceEnd, item.sequence);
-      existing.method = item.codex_method ?? existing.method;
-      if (item.codex_method === "item/agentMessage/delta") {
-        existing.text += text;
-      } else if (text.trim() && text.length >= existing.text.length) {
-        existing.text = text;
-      }
-      continue;
-    }
-
-    const entry: Extract<TranscriptEntry, { kind: "agent" }> = {
-      kind: "agent",
-      id: `agent:${key}:${item.id}`,
-      at: item.created_at,
-      sortTime: timeValue(item.created_at),
-      sortIndex: item.sequence,
-      sequenceStart: item.sequence,
-      sequenceEnd: item.sequence,
-      method: item.codex_method,
-      codexItemId: item.codex_item_id,
-      text,
-      items: [item],
-    };
-    agentGroups.set(key, entry);
-    entries.push(entry);
-  }
-
-  for (const message of messages) {
-    entries.push({
-      kind: "message",
-      id: `message:${message.id}`,
-      at: message.created_at,
-      sortTime: timeValue(message.created_at),
-      sortIndex: -1,
-      message,
-    });
-  }
-
-  return entries.sort((a, b) => {
-    if (a.sortTime !== b.sortTime) return a.sortTime - b.sortTime;
-    const rank = { message: 0, agent: 1, item: 2 };
-    if (rank[a.kind] !== rank[b.kind]) return rank[a.kind] - rank[b.kind];
-    return a.sortIndex - b.sortIndex || a.id.localeCompare(b.id);
-  });
-}
-
-function messageTitle(message: Message): string {
-  if (message.mode === "initial") return "Initial Prompt";
-  if (message.mode === "continue") return "Continue";
-  return "Steer";
+function itemTypeTitle(type: ItemType | null): string {
+  if (type === "toolcall") return "Tool Call";
+  if (type === "toolresult") return "Tool Result";
+  if (type === "reasoning") return "Reasoning";
+  if (type === "error") return "Error";
+  if (type === "state") return "State";
+  if (type === "agentmessage") return "Agent Message Item";
+  if (type === "raw") return "Raw Item";
+  return "Debug";
 }
 
 function itemTitle(item: Item): string {
-  if (item.type === "toolcall") return "Tool Call";
-  if (item.type === "toolresult") return "Tool Result";
-  if (item.type === "reasoning") return "Reasoning";
-  if (item.type === "error") return "Error";
-  if (item.type === "state") return "State";
-  return "Raw Item";
+  if (item.type === "raw") return "Raw Item";
+  return itemTypeTitle(item.type);
+}
+
+function transcriptTitle(entry: TranscriptEntry): string {
+  if (entry.kind === "message") return messageTitle(entry.message_mode);
+  if (entry.kind === "agent_message") return "Agent";
+  if (entry.kind === "tool") return itemTypeTitle(entry.item_type);
+  return itemTypeTitle(entry.item_type);
+}
+
+function transcriptClass(entry: TranscriptEntry): string {
+  if (entry.kind === "message") return "transcript-message";
+  if (entry.kind === "agent_message") return "transcript-agent";
+  if (entry.kind === "tool") {
+    return entry.item_type === "toolresult"
+      ? "transcript-toolresult"
+      : "transcript-toolcall";
+  }
+  return `transcript-${entry.item_type ?? "debug"}`;
+}
+
+function truncateSummary(value: string | null | undefined): string | null {
+  const text = value?.replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  return text.length > 220 ? `${text.slice(0, 220)}...` : text;
+}
+
+function transcriptSummary(entry: TranscriptEntry): string {
+  const text = truncateSummary(entry.text);
+  if (text) return text;
+  const parts = [
+    entry.codex_method,
+    entry.codex_item_type,
+    entry.codex_item_id ? `id ${shortId(entry.codex_item_id)}` : null,
+  ].filter(Boolean);
+  return parts.join(" - ") || "No transcript text.";
 }
 
 function itemSummary(item: Item): string {
@@ -411,11 +376,43 @@ function itemSummary(item: Item): string {
   return summary.length > 220 ? `${summary.slice(0, 220)}...` : summary;
 }
 
+function sequenceRangeLabel(values: number[]): string {
+  if (values.length === 0) return "no raw items";
+  const sorted = [...values].sort((a, b) => a - b);
+  const first = sorted[0] ?? 0;
+  const last = sorted[sorted.length - 1] ?? first;
+  if (first === last) return `item #${first}`;
+  return `items #${first}-${last} (${sorted.length})`;
+}
+
+function transcriptWindowLabel(
+  entries: TranscriptEntry[],
+  afterSequence: number | null,
+): string {
+  if (entries.length === 0) return `after entry #${afterSequence ?? 0}`;
+  const first = entries[0]?.sequence ?? afterSequence ?? 0;
+  const last = entries[entries.length - 1]?.sequence ?? first;
+  return first === last ? `entry #${first}` : `entries #${first}-${last}`;
+}
+
 function itemWindowLabel(items: Item[], afterSequence: number | null): string {
   if (items.length === 0) return `after #${afterSequence ?? 0}`;
   const first = items[0]?.sequence ?? afterSequence ?? 0;
   const last = items[items.length - 1]?.sequence ?? first;
   return first === last ? `#${first}` : `#${first}-${last}`;
+}
+
+function transcriptMetadata(entry: TranscriptEntry): Record<string, unknown> {
+  return {
+    source: entry.source,
+    source_id: entry.source_id,
+    role: entry.role,
+    codex_method: entry.codex_method,
+    codex_item_id: entry.codex_item_id,
+    codex_item_type: entry.codex_item_type,
+    item_ids: entry.item_ids,
+    item_sequences: entry.item_sequences,
+  };
 }
 
 function getErrorMessage(error: unknown): string {
@@ -431,11 +428,19 @@ function App() {
     null,
   );
   const [taskSpec, setTaskSpec] = useState<TaskSpecMetadata | null>(null);
+  const [transcriptEntries, setTranscriptEntries] = useState<
+    TranscriptEntry[]
+  >([]);
+  const [transcriptAfter, setTranscriptAfter] = useState<number | null>(null);
+  const [transcriptHistory, setTranscriptHistory] = useState<number[]>([]);
+  const [transcriptNextCursor, setTranscriptNextCursor] = useState<
+    string | null
+  >(null);
+  const [showRawItems, setShowRawItems] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [itemAfter, setItemAfter] = useState<number | null>(null);
   const [itemHistory, setItemHistory] = useState<number[]>([]);
   const [itemNextCursor, setItemNextCursor] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -464,16 +469,11 @@ function App() {
   const latestAgentMessage = useMemo(() => {
     if (selectedSession?.last_agent_message)
       return selectedSession.last_agent_message;
-    const newestAgentItem = [...items]
-      .filter((item) => item.type === "agentmessage" && item.text_excerpt)
+    const newestAgentEntry = [...transcriptEntries]
+      .filter((entry) => entry.kind === "agent_message" && entry.text)
       .sort((a, b) => b.sequence - a.sequence)[0];
-    return newestAgentItem?.text_excerpt ?? null;
-  }, [items, selectedSession]);
-
-  const transcript = useMemo(
-    () => buildTranscript(messages, items),
-    [items, messages],
-  );
+    return newestAgentEntry?.text ?? null;
+  }, [selectedSession, transcriptEntries]);
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -516,31 +516,32 @@ function App() {
   }, []);
 
   const loadDetail = useCallback(
-    async (
-      sessionId: ID,
-      type: ItemType | "all",
-      afterSequence: number | null,
-    ) => {
+    async (sessionId: ID, options: LoadDetailOptions) => {
       setLoadingDetail(true);
       setError(null);
       try {
-        const [nextSessionDetail, nextItemPage, nextMessages] =
+        const rawItemsPromise = options.includeRawItems
+          ? fetchItems(sessionId, options.rawItemType, options.rawItemAfter)
+          : Promise.resolve<ItemPage | null>(null);
+        const [nextSessionDetail, nextTranscriptPage, nextItemPage] =
           await Promise.all([
             fetchSession(sessionId),
-            fetchItems(sessionId, type, afterSequence),
-            fetchMessages(sessionId),
+            fetchTranscript(sessionId, options.transcriptAfter),
+            rawItemsPromise,
           ]);
         setSelectedSession(nextSessionDetail.session);
         setTaskSpec(nextSessionDetail.task_spec);
-        setItems(nextItemPage.items);
-        setItemNextCursor(nextItemPage.next_cursor);
-        setMessages(nextMessages);
+        setTranscriptEntries(nextTranscriptPage.entries);
+        setTranscriptNextCursor(nextTranscriptPage.next_cursor);
+        setItems(nextItemPage?.items ?? []);
+        setItemNextCursor(nextItemPage?.next_cursor ?? null);
       } catch (loadError) {
         setSelectedSession(null);
         setTaskSpec(null);
+        setTranscriptEntries([]);
+        setTranscriptNextCursor(null);
         setItems([]);
         setItemNextCursor(null);
-        setMessages([]);
         setError(`Session detail: ${getErrorMessage(loadError)}`);
       } finally {
         setLoadingDetail(false);
@@ -552,7 +553,12 @@ function App() {
   const refreshCurrent = useCallback(async () => {
     if (selectedProjectId) await loadSessions(selectedProjectId);
     if (selectedSessionId)
-      await loadDetail(selectedSessionId, itemType, itemAfter);
+      await loadDetail(selectedSessionId, {
+        transcriptAfter,
+        rawItemType: itemType,
+        rawItemAfter: itemAfter,
+        includeRawItems: showRawItems,
+      });
   }, [
     itemAfter,
     itemType,
@@ -560,6 +566,8 @@ function App() {
     loadSessions,
     selectedProjectId,
     selectedSessionId,
+    showRawItems,
+    transcriptAfter,
   ]);
 
   useEffect(() => {
@@ -579,17 +587,27 @@ function App() {
     if (!selectedSessionId) {
       setSelectedSession(null);
       setTaskSpec(null);
+      setTranscriptEntries([]);
+      setTranscriptAfter(null);
+      setTranscriptHistory([]);
+      setTranscriptNextCursor(null);
       setItems([]);
       setItemAfter(null);
       setItemHistory([]);
       setItemNextCursor(null);
-      setMessages([]);
       return;
     }
+    setTranscriptAfter(null);
+    setTranscriptHistory([]);
     setItemAfter(null);
     setItemHistory([]);
-    void loadDetail(selectedSessionId, itemType, null);
-  }, [itemType, loadDetail, selectedSessionId]);
+    void loadDetail(selectedSessionId, {
+      transcriptAfter: null,
+      rawItemType: itemType,
+      rawItemAfter: null,
+      includeRawItems: showRawItems,
+    });
+  }, [itemType, loadDetail, selectedSessionId, showRawItems]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -640,13 +658,46 @@ function App() {
     }
   }
 
+  async function handleNextTranscript() {
+    if (!selectedSession || transcriptNextCursor === null) return;
+    const nextAfter = Number(transcriptNextCursor);
+    if (!Number.isInteger(nextAfter)) return;
+    setTranscriptHistory((current) => [...current, transcriptAfter ?? 0]);
+    setTranscriptAfter(nextAfter);
+    await loadDetail(selectedSession.id, {
+      transcriptAfter: nextAfter,
+      rawItemType: itemType,
+      rawItemAfter: itemAfter,
+      includeRawItems: showRawItems,
+    });
+  }
+
+  async function handlePreviousTranscript() {
+    if (!selectedSession || transcriptHistory.length === 0) return;
+    const previousHistory = transcriptHistory.slice(0, -1);
+    const previousAfter = transcriptHistory[transcriptHistory.length - 1] ?? 0;
+    setTranscriptHistory(previousHistory);
+    setTranscriptAfter(previousAfter === 0 ? null : previousAfter);
+    await loadDetail(selectedSession.id, {
+      transcriptAfter: previousAfter === 0 ? null : previousAfter,
+      rawItemType: itemType,
+      rawItemAfter: itemAfter,
+      includeRawItems: showRawItems,
+    });
+  }
+
   async function handleNextItems() {
     if (!selectedSession || itemNextCursor === null) return;
     const nextAfter = Number(itemNextCursor);
     if (!Number.isInteger(nextAfter)) return;
     setItemHistory((current) => [...current, itemAfter ?? 0]);
     setItemAfter(nextAfter);
-    await loadDetail(selectedSession.id, itemType, nextAfter);
+    await loadDetail(selectedSession.id, {
+      transcriptAfter,
+      rawItemType: itemType,
+      rawItemAfter: nextAfter,
+      includeRawItems: showRawItems,
+    });
   }
 
   async function handlePreviousItems() {
@@ -655,11 +706,12 @@ function App() {
     const previousAfter = itemHistory[itemHistory.length - 1] ?? 0;
     setItemHistory(previousHistory);
     setItemAfter(previousAfter === 0 ? null : previousAfter);
-    await loadDetail(
-      selectedSession.id,
-      itemType,
-      previousAfter === 0 ? null : previousAfter,
-    );
+    await loadDetail(selectedSession.id, {
+      transcriptAfter,
+      rawItemType: itemType,
+      rawItemAfter: previousAfter === 0 ? null : previousAfter,
+      includeRawItems: showRawItems,
+    });
   }
 
   return (
@@ -882,39 +934,39 @@ function App() {
                   <div>
                     <h3>Transcript</h3>
                     <p>
-                      Items {itemWindowLabel(items, itemAfter)}; page limit{" "}
-                      {ITEM_PAGE_LIMIT}
+                      {transcriptWindowLabel(
+                        transcriptEntries,
+                        transcriptAfter,
+                      )}
+                      ; transcript page limit {TRANSCRIPT_PAGE_LIMIT}
                     </p>
                   </div>
                   <div className="item-controls">
-                    <label>
-                      Type
-                      <select
-                        value={itemType}
+                    <label className="toggle-label">
+                      <input
+                        type="checkbox"
+                        checked={showRawItems}
                         onChange={(event) =>
-                          setItemType(event.target.value as ItemType | "all")
+                          setShowRawItems(event.target.checked)
                         }
-                      >
-                        {ITEM_TYPES.map((type) => (
-                          <option key={type} value={type}>
-                            {type}
-                          </option>
-                        ))}
-                      </select>
+                      />
+                      Raw items
                     </label>
                     <button
                       className="button button-secondary button-compact"
                       type="button"
-                      onClick={() => void handlePreviousItems()}
-                      disabled={loadingDetail || itemHistory.length === 0}
+                      onClick={() => void handlePreviousTranscript()}
+                      disabled={
+                        loadingDetail || transcriptHistory.length === 0
+                      }
                     >
                       Previous
                     </button>
                     <button
                       className="button button-secondary button-compact"
                       type="button"
-                      onClick={() => void handleNextItems()}
-                      disabled={loadingDetail || itemNextCursor === null}
+                      onClick={() => void handleNextTranscript()}
+                      disabled={loadingDetail || transcriptNextCursor === null}
                     >
                       Next
                     </button>
@@ -922,7 +974,7 @@ function App() {
                 </div>
 
                 <div className="item-list" aria-busy={loadingDetail}>
-                  {transcript.map((entry) => {
+                  {transcriptEntries.map((entry) => {
                     if (entry.kind === "message") {
                       return (
                         <article
@@ -930,27 +982,23 @@ function App() {
                           key={entry.id}
                         >
                           <div className="transcript-meta">
-                            <strong>{messageTitle(entry.message)}</strong>
-                            <span>{entry.message.sender_type}</span>
+                            <strong>{messageTitle(entry.message_mode)}</strong>
+                            <span>Entry #{entry.sequence}</span>
                             <span className="message-status">
-                              {entry.message.status}
+                              {entry.message_status ?? entry.role}
                             </span>
-                            <time>{formatDate(entry.at)}</time>
+                            <time>{formatDate(entry.created_at)}</time>
                           </div>
-                          <p>
-                            {compactText(entry.message.content, "Continue.")}
-                          </p>
-                          {entry.message.error ? (
-                            <details className="payload-details">
-                              <summary>Message error</summary>
-                              <pre>{entry.message.error}</pre>
-                            </details>
-                          ) : null}
+                          <p>{compactText(entry.text, "Continue.")}</p>
+                          <details className="payload-details">
+                            <summary>Transcript metadata</summary>
+                            <pre>{displayJson(transcriptMetadata(entry))}</pre>
+                          </details>
                         </article>
                       );
                     }
 
-                    if (entry.kind === "agent") {
+                    if (entry.kind === "agent_message") {
                       return (
                         <article
                           className="transcript-row transcript-agent"
@@ -958,61 +1006,142 @@ function App() {
                         >
                           <div className="transcript-meta">
                             <strong>Agent</strong>
-                            <span>
-                              #{entry.sequenceStart}
-                              {entry.sequenceEnd !== entry.sequenceStart
-                                ? `-${entry.sequenceEnd}`
-                                : ""}
-                            </span>
-                            <span>{entry.method ?? "agentmessage"}</span>
-                            <time>{formatDate(entry.at)}</time>
+                            <span>Entry #{entry.sequence}</span>
+                            <span>{sequenceRangeLabel(entry.item_sequences)}</span>
+                            <time>{formatDate(entry.created_at)}</time>
                           </div>
                           <p>{compactText(entry.text)}</p>
                           <details className="payload-details">
-                            <summary>
-                              Raw payload{entry.items.length === 1 ? "" : "s"}
-                            </summary>
-                            <pre>
-                              {displayJson(
-                                entry.items.length === 1
-                                  ? entry.items[0]?.raw_payload
-                                  : entry.items.map((item) => item.raw_payload),
-                              )}
-                            </pre>
+                            <summary>Transcript metadata</summary>
+                            <pre>{displayJson(transcriptMetadata(entry))}</pre>
                           </details>
                         </article>
                       );
                     }
 
                     return (
-                      <article
-                        className={`transcript-row transcript-${entry.item.type}`}
+                      <details
+                        className={`transcript-row transcript-toggle ${transcriptClass(entry)}`}
                         key={entry.id}
                       >
+                        <summary className="transcript-summary">
+                          <strong>{transcriptTitle(entry)}</strong>
+                          <span>Entry #{entry.sequence}</span>
+                          <span>{transcriptSummary(entry)}</span>
+                          <time>{formatDate(entry.created_at)}</time>
+                        </summary>
                         <div className="transcript-meta">
-                          <strong>{itemTitle(entry.item)}</strong>
-                          <span>#{entry.item.sequence}</span>
+                          <strong>
+                            {entry.kind === "tool" ? "Tool" : "Debug"}
+                          </strong>
+                          <span>{sequenceRangeLabel(entry.item_sequences)}</span>
                           <span>
-                            {entry.item.codex_method ??
-                              entry.item.codex_item_type ??
-                              entry.item.type}
+                            {entry.codex_method ??
+                              entry.codex_item_type ??
+                              entry.item_type ??
+                              entry.role}
                           </span>
-                          <time>{formatDate(entry.at)}</time>
+                          <time>{formatDate(entry.created_at)}</time>
                         </div>
-                        <p>{itemSummary(entry.item)}</p>
+                        <p>{compactText(entry.text, "No transcript text.")}</p>
                         <details className="payload-details">
-                          <summary>Payload details</summary>
-                          <pre>{displayJson(entry.item.raw_payload)}</pre>
+                          <summary>Transcript metadata</summary>
+                          <pre>{displayJson(transcriptMetadata(entry))}</pre>
                         </details>
-                      </article>
+                      </details>
                     );
                   })}
-                  {!loadingDetail && transcript.length === 0 ? (
+                  {!loadingDetail && transcriptEntries.length === 0 ? (
                     <p className="empty">
                       No transcript entries match this filter.
                     </p>
                   ) : null}
                 </div>
+
+                {showRawItems ? (
+                  <div
+                    className="raw-item-panel"
+                    aria-label="Raw item inspection"
+                  >
+                    <div className="section-heading raw-item-heading">
+                      <div>
+                        <h3>Raw Item Inspection</h3>
+                        <p>
+                          Items {itemWindowLabel(items, itemAfter)}; page limit{" "}
+                          {ITEM_PAGE_LIMIT}
+                        </p>
+                      </div>
+                      <div className="item-controls">
+                        <label>
+                          Type
+                          <select
+                            value={itemType}
+                            onChange={(event) =>
+                              setItemType(
+                                event.target.value as ItemType | "all",
+                              )
+                            }
+                          >
+                            {ITEM_TYPES.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          className="button button-secondary button-compact"
+                          type="button"
+                          onClick={() => void handlePreviousItems()}
+                          disabled={loadingDetail || itemHistory.length === 0}
+                        >
+                          Previous
+                        </button>
+                        <button
+                          className="button button-secondary button-compact"
+                          type="button"
+                          onClick={() => void handleNextItems()}
+                          disabled={loadingDetail || itemNextCursor === null}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      className="item-list raw-item-list"
+                      aria-busy={loadingDetail}
+                    >
+                      {items.map((item) => (
+                        <article
+                          className={`transcript-row transcript-${item.type}`}
+                          key={item.id}
+                        >
+                          <div className="transcript-meta">
+                            <strong>{itemTitle(item)}</strong>
+                            <span>Item #{item.sequence}</span>
+                            <span>
+                              {item.codex_method ??
+                                item.codex_item_type ??
+                                item.type}
+                            </span>
+                            <time>{formatDate(item.created_at)}</time>
+                          </div>
+                          <p>{itemSummary(item)}</p>
+                          <details className="payload-details">
+                            <summary>Raw payload</summary>
+                            <pre>{displayJson(item.raw_payload)}</pre>
+                          </details>
+                        </article>
+                      ))}
+                      {!loadingDetail && items.length === 0 ? (
+                        <p className="empty">
+                          No raw items match this filter.
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </section>
             </>
           ) : (

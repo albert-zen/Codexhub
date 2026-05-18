@@ -560,16 +560,17 @@ function latestManagerItem(
 ): import("@codexhub/core").Item | null {
   if (
     !includeSession ||
-    type !== "agentmessage" ||
-    !session.last_agent_message
+    type !== "agentmessage"
   ) {
     return item;
   }
 
+  if (!session.last_agent_message) return null;
+
   const source = session.last_agent_message_item_id
     ? state.repo.getItem(session.last_agent_message_item_id)
     : item;
-  if (!source) return item;
+  if (!source) return null;
   return { ...source, text_excerpt: session.last_agent_message };
 }
 

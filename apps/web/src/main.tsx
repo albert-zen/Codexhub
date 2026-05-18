@@ -466,14 +466,7 @@ function App() {
     [projects, selectedProjectId],
   );
 
-  const latestAgentMessage = useMemo(() => {
-    if (selectedSession?.last_agent_message)
-      return selectedSession.last_agent_message;
-    const newestAgentEntry = [...transcriptEntries]
-      .filter((entry) => entry.kind === "agent_message" && entry.text)
-      .sort((a, b) => b.sequence - a.sequence)[0];
-    return newestAgentEntry?.text ?? null;
-  }, [selectedSession, transcriptEntries]);
+  const latestAgentMessage = selectedSession?.last_agent_message ?? null;
 
   const visibleTranscriptEntries = useMemo(
     () => transcriptEntries.filter((entry) => entry.kind !== "debug"),

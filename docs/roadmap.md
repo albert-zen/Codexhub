@@ -218,7 +218,7 @@ agent message.
 - Persist raw Codex events in arrival order with monotonic per-session sequence.
 - Classify each event with `packages/core`.
 - Update session projections such as `last_item_sequence`,
-  `last_agent_message`, and failure state.
+  completion-only `last_agent_message`, and failure state.
 - Add compact item listing by session, type, sequence cursor, and limit.
 
 ### Phase 4: Message Flow

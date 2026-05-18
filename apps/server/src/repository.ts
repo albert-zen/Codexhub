@@ -713,12 +713,15 @@ export class HubRepository {
         item.text_excerpt,
       );
 
-    const agentProjection =
-      item.type === "agentmessage" && item.text_excerpt
-        ? this.agentMessageProjection(item)
+    const completedAgentMessage =
+      item.type === "agentmessage" &&
+      item.codex_method === "item/completed" &&
+      item.text_excerpt &&
+      item.text_excerpt.trim() !== ""
+        ? item
         : null;
 
-    if (agentProjection && !agentProjection.isSingleDeltaFragment) {
+    if (completedAgentMessage) {
       this.db
         .prepare(
           `UPDATE worker_sessions
@@ -728,9 +731,9 @@ export class HubRepository {
         )
         .run(
           item.sequence,
-          agentProjection.itemId,
-          agentProjection.text,
-          agentProjection.createdAt,
+          completedAgentMessage.id,
+          completedAgentMessage.text_excerpt,
+          completedAgentMessage.created_at,
           now,
           sessionId,
         );

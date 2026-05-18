@@ -651,75 +651,119 @@ describe("Codexhub API", () => {
     }
   }, 15_000);
 
-  it("keeps manager-facing latest agent messages complete while preserving raw deltas", async () => {
+  it("keeps session latest stable while preserving raw agent deltas", async () => {
     const dbPath = join(tempDir, "latest-agentmessage.sqlite");
-    const database = openDatabase({ path: dbPath });
-    const repo = new HubRepository(database.db);
-    const project = repo.createProject({ name: "latest-agentmessage-demo" });
-    const workspace = repo.createWorkspace({
-      project_id: project.id,
-      source_type: "local",
-      path: join(tempDir, "latest-agentmessage-workspace"),
-      cwd: join(tempDir, "latest-agentmessage-workspace"),
-    });
-    const session = repo.createSession({
-      project_id: project.id,
-      workspace_id: workspace.id,
-    });
+    let sessionId = "";
 
-    repo.appendItem(session.id, {
-      method: "item/completed",
-      params: {
-        item: {
-          id: "agent_previous",
-          type: "agentMessage",
-          text: "Previous complete answer.",
+    {
+      const database = openDatabase({ path: dbPath });
+      const repo = new HubRepository(database.db);
+      const project = repo.createProject({ name: "latest-agentmessage-demo" });
+      const workspace = repo.createWorkspace({
+        project_id: project.id,
+        source_type: "local",
+        path: join(tempDir, "latest-agentmessage-workspace"),
+        cwd: join(tempDir, "latest-agentmessage-workspace"),
+      });
+      const session = repo.createSession({
+        project_id: project.id,
+        workspace_id: workspace.id,
+      });
+      sessionId = session.id;
+
+      repo.appendItem(session.id, {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "agent_previous",
+            type: "agentMessage",
+            text: "Previous complete answer.",
+          },
         },
-      },
-    });
-    expect(repo.getSession(session.id)?.last_agent_message).toBe(
-      "Previous complete answer.",
-    );
+      });
+      expect(repo.getSession(session.id)?.last_agent_message).toBe(
+        "Previous complete answer.",
+      );
 
-    repo.appendItem(session.id, {
-      method: "item/agentMessage/delta",
-      params: { itemId: "agent_current", textDelta: "The" },
-    });
-    expect(repo.getSession(session.id)?.last_agent_message).toBe(
-      "Previous complete answer.",
-    );
-    expect(repo.latestItem(session.id, "agentmessage")?.text_excerpt).toBe(
-      "The",
-    );
-
-    repo.appendItem(session.id, {
-      method: "item/agentMessage/delta",
-      params: { itemId: "agent_current", textDelta: " complete draft" },
-    });
-    expect(repo.getSession(session.id)?.last_agent_message).toBe(
-      "The complete draft",
-    );
-
-    repo.appendItem(session.id, {
-      method: "item/completed",
-      params: {
-        item: {
-          id: "agent_current",
-          type: "agentMessage",
-          text: "The complete final answer.",
+      repo.appendItem(session.id, {
+        method: "item/agentMessage/delta",
+        params: {
+          itemId: "agent_current",
+          textDelta: "The worktree is clean. The",
         },
-      },
-    });
-    expect(repo.getSession(session.id)?.last_agent_message).toBe(
-      "The complete final answer.",
-    );
-    database.close();
+      });
+      expect(repo.getSession(session.id)?.last_agent_message).toBe(
+        "Previous complete answer.",
+      );
+      expect(repo.latestItem(session.id, "agentmessage")?.text_excerpt).toBe(
+        "The worktree is clean. The",
+      );
 
-    const seeded = await createServer({ dbPath, logger: false });
+      repo.appendItem(session.id, {
+        method: "item/agentMessage/delta",
+        params: {
+          itemId: "agent_current",
+          textDelta: " rest is still drafting.",
+        },
+      });
+      expect(repo.getSession(session.id)?.last_agent_message).toBe(
+        "Previous complete answer.",
+      );
+      database.close();
+    }
+
+    let seeded = await createServer({ dbPath, logger: false });
+    try {
+      const stableLatest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${sessionId}/latest?type=agentmessage`,
+      );
+      expect(stableLatest.last_agent_message).toBe(
+        "Previous complete answer.",
+      );
+      expect(stableLatest.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/completed",
+        text_excerpt: "Previous complete answer.",
+      });
+
+      const rawLatest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${sessionId}/items/latest?type=agentmessage`,
+      );
+      expect(rawLatest.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: " rest is still drafting.",
+      });
+    } finally {
+      await seeded.close();
+    }
+
+    {
+      const database = openDatabase({ path: dbPath });
+      const repo = new HubRepository(database.db);
+      repo.appendItem(sessionId, {
+        method: "item/completed",
+        params: {
+          item: {
+            id: "agent_current",
+            type: "agentMessage",
+            text: "The complete final answer.",
+          },
+        },
+      });
+      expect(repo.getSession(sessionId)?.last_agent_message).toBe(
+        "The complete final answer.",
+      );
+      database.close();
+    }
+
+    seeded = await createServer({ dbPath, logger: false });
     try {
       const latest = await getFrom(
         seeded,
-        `/api/v1/sessions/${session.id}/latest?type=agentmessage`,
+        `/api/v1/sessions/${sessionId}/latest?type=agentmessage`,
       );
       expect(latest.last_agent_message).toBe("The complete final answer.");
       expect(latest.item).toMatchObject({
@@ -730,7 +774,7 @@ describe("Codexhub API", () => {
 
       const rawItems = await getFrom(
         seeded,
-        `/api/v1/sessions/${session.id}/items?type=agentmessage&limit=10`,
+        `/api/v1/sessions/${sessionId}/items?type=agentmessage&limit=10`,
       );
       expect(
         rawItems.items.map(
@@ -744,9 +788,63 @@ describe("Codexhub API", () => {
       ]);
       expect(rawItems.items[1]).toMatchObject({
         codex_method: "item/agentMessage/delta",
-        text_excerpt: "The",
+        text_excerpt: "The worktree is clean. The",
       });
-      expect(rawItems.items[1].raw_payload.params.textDelta).toBe("The");
+      expect(rawItems.items[1].raw_payload.params.textDelta).toBe(
+        "The worktree is clean. The",
+      );
+    } finally {
+      await seeded.close();
+    }
+  });
+
+  it("does not expose a draft-only agent delta as session latest", async () => {
+    const dbPath = join(tempDir, "draft-only-latest.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "draft-only-latest-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "draft-only-latest-workspace"),
+      cwd: join(tempDir, "draft-only-latest-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    repo.appendItem(session.id, {
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "agent_current",
+        textDelta: "The worktree is clean. The",
+      },
+    });
+    expect(repo.getSession(session.id)?.last_agent_message).toBeNull();
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const stableLatest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest?type=agentmessage`,
+      );
+      expect(stableLatest.last_agent_message).toBeNull();
+      expect(stableLatest.item).toBeNull();
+
+      const rawLatest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items/latest?type=agentmessage`,
+      );
+      expect(rawLatest.item).toMatchObject({
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: "The worktree is clean. The",
+      });
+      expect(rawLatest.item.raw_payload.params.textDelta).toBe(
+        "The worktree is clean. The",
+      );
     } finally {
       await seeded.close();
     }

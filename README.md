@@ -82,6 +82,11 @@ Side-effect commands such as `session send`, `session stop`,
 `session review-status set`, and `run-group add-session` refuse the request
 before changing state.
 
+`session latest` and session list summaries report the last completed agent
+message. Streaming `item/agentMessage/delta` fragments remain available through
+`session trace` and raw `session items` reads, but they do not replace the stable
+latest message until Codex emits the completed agent message item.
+
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.
 

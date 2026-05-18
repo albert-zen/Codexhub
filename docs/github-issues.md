@@ -110,3 +110,9 @@ reading path aligned with that tracker.
   - API responses keep canonical ids unchanged.
   - Ambiguous prefixes return `session_id_ambiguous` with machine-readable
     `candidate_ids`; side-effect commands refuse them before changing state.
+
+- `#39 fix(session): keep latest agent message stable across streaming deltas`
+  - `session latest`, session summaries, and `last_agent_message` track the
+    last completed agent message only.
+  - Raw `item/agentMessage/delta` payloads remain available through item reads
+    and transcript/debug surfaces.

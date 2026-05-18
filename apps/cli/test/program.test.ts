@@ -141,7 +141,7 @@ describe("codexhub commands", () => {
     });
   });
 
-  it("prints projected latest text instead of a raw delta fragment", async () => {
+  it("prints stable latest text instead of a raw delta fragment", async () => {
     const output: string[] = [];
     const program = createProgram({
       fetch: async () =>
@@ -153,7 +153,7 @@ describe("codexhub commands", () => {
             codex_method: "item/agentMessage/delta",
             text_excerpt: "The",
           },
-          last_agent_message: "The complete draft",
+          last_agent_message: "Previous complete answer.",
         }),
       stdout: (text) => output.push(text),
     });
@@ -168,7 +168,37 @@ describe("codexhub commands", () => {
       "sess_1",
     ]);
 
-    expect(output.join("").trim()).toBe("The complete draft");
+    expect(output.join("").trim()).toBe("Previous complete answer.");
+  });
+
+  it("does not print an agent delta when stable latest is empty", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "agentmessage",
+          item: {
+            type: "agentmessage",
+            codex_method: "item/agentMessage/delta",
+            text_excerpt: "The worktree is clean. The",
+          },
+          last_agent_message: null,
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+    ]);
+
+    expect(output.join("").trim()).toBe("No agent message.");
   });
 
   it("starts sessions with task spec metadata", async () => {

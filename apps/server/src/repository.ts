@@ -837,7 +837,7 @@ export class HubRepository {
             'agent:' || group_id AS entry_id,
             codex_item_id,
             source_id,
-            MIN(created_at) AS sort_time,
+            MIN(first_created_at) AS sort_time,
             1 AS sort_source_rank,
             MIN(sequence) AS sort_sequence,
             'agent:' || group_id AS tie_id
@@ -846,7 +846,12 @@ export class HubRepository {
               CASE WHEN codex_item_id IS NOT NULL THEN codex_item_id ELSE id END AS group_id,
               codex_item_id,
               CASE WHEN codex_item_id IS NULL THEN id ELSE NULL END AS source_id,
-              created_at,
+              FIRST_VALUE(created_at) OVER (
+                PARTITION BY
+                  codex_item_id,
+                  CASE WHEN codex_item_id IS NULL THEN id ELSE NULL END
+                ORDER BY sequence ASC
+              ) AS first_created_at,
               sequence
             FROM items
             WHERE session_id = ? AND type = 'agentmessage'

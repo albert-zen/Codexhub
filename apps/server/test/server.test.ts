@@ -378,6 +378,108 @@ describe("Codexhub API", () => {
     }
   }, 15_000);
 
+  it("orders recent grouped agent messages by first sequence timestamp", async () => {
+    const dbPath = join(tempDir, "skewed-recent-transcript.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "skewed-transcript-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "skewed-transcript-workspace"),
+      cwd: join(tempDir, "skewed-transcript-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    const before = repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "tool_before",
+          type: "mcpToolCall",
+          text: "before",
+        },
+      },
+    });
+    const agentDelta = repo.appendItem(session.id, {
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "agent_skewed",
+        textDelta: "partial ",
+      },
+    });
+    const agentComplete = repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "agent_skewed",
+          type: "agentMessage",
+          text: "complete",
+        },
+      },
+    });
+    const middle = repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "tool_middle",
+          type: "mcpToolCall",
+          text: "middle",
+        },
+      },
+    });
+    const after = repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "tool_after",
+          type: "mcpToolCall",
+          text: "after",
+        },
+      },
+    });
+
+    const setCreatedAt = database.db.prepare(
+      "UPDATE items SET created_at = ? WHERE id = ?",
+    );
+    setCreatedAt.run("2026-01-01T00:00:01.000Z", before.id);
+    setCreatedAt.run("2026-01-01T00:00:03.000Z", agentDelta.id);
+    setCreatedAt.run("2026-01-01T00:00:00.000Z", agentComplete.id);
+    setCreatedAt.run("2026-01-01T00:00:02.000Z", middle.id);
+    setCreatedAt.run("2026-01-01T00:00:04.000Z", after.id);
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const full = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?limit=10`,
+      );
+      const recent = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?limit=3&recent=true`,
+      );
+
+      expect(recent.transcript).toEqual(full.transcript.slice(-3));
+      expect(
+        recent.transcript.map(
+          (entry: { kind: string; text: string | null }) =>
+            `${entry.kind}:${entry.text}`,
+        ),
+      ).toEqual(["tool:middle", "agent_message:complete", "tool:after"]);
+      expect(recent.transcript[1]).toMatchObject({
+        created_at: "2026-01-01T00:00:03.000Z",
+        item_sequences: [2, 3],
+      });
+      expect(recent.next_cursor).toBeNull();
+    } finally {
+      await seeded.close();
+    }
+  }, 15_000);
+
   it("keeps manager-facing latest agent messages complete while preserving raw deltas", async () => {
     const dbPath = join(tempDir, "latest-agentmessage.sqlite");
     const database = openDatabase({ path: dbPath });

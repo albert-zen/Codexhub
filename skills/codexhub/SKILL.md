@@ -38,6 +38,28 @@ Use it to:
 
 Always send meaningful message content. Do not use empty continue messages.
 
+## Clean JSON Invocation
+
+Manager-agent scripts must keep stdout machine-readable when they pipe
+`--json` output into a parser. Prefer a built or linked `codexhub` command:
+
+```powershell
+codexhub sessions recent --project <project_id_or_name> --limit 10 --json | ConvertFrom-Json
+```
+
+When running from a source checkout through pnpm, add `--silent` before the
+filter so pnpm lifecycle banners do not corrupt stdout:
+
+```powershell
+pnpm --silent --filter @codexhub/cli dev -- session trace <session_id> --after <sequence> --limit 20 --json | ConvertFrom-Json
+```
+
+Do not pipe plain `pnpm --filter @codexhub/cli dev -- ... --json` into
+`ConvertFrom-Json`, `jq`, or another JSON parser. If parsing fails after a
+side-effecting command such as creating a project, workspace, session, message,
+or run group, inspect existing Codexhub state before retrying so the manager
+does not duplicate the side effect.
+
 ## Task Specs
 
 Every non-trivial worker task should include enough specification for the worker

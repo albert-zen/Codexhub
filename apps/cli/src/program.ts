@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { Command, InvalidArgumentError } from "commander";
 import type {
+  CreateReviewFindingRequest,
   CreateProjectRequest,
   CreateRunGroupRequest,
   CreateWorkspaceRequest,
@@ -8,12 +9,15 @@ import type {
   ItemListQuery,
   ItemType,
   MessageMode,
+  ReviewFindingSeverity,
+  ReviewFindingStatus,
   SendMessageRequest,
   SenderType,
   SessionListQuery,
   StartFollowUpSessionRequest,
   StartSessionRequest,
   TranscriptListQuery,
+  UpdateReviewFindingRequest,
   UpdateReviewGateStatusRequest,
   WorkerSessionStatus,
 } from "@codexhub/core";
@@ -147,6 +151,23 @@ interface ReviewStatusSetOptions extends BaseCommandOptions {
   reviewAddressed?: boolean;
   readyForHumanReview?: boolean;
   note?: string;
+}
+
+interface ReviewFindingsListOptions extends BaseCommandOptions {
+  limit?: number;
+  cursor?: string;
+}
+
+interface ReviewFindingsAddOptions extends BaseCommandOptions {
+  reviewerSession: string;
+  severity: string;
+  summary: string;
+  details?: string;
+}
+
+interface ReviewFindingsSetOptions extends BaseCommandOptions {
+  status?: string;
+  response?: string;
 }
 
 const DEFAULT_API = process.env.CODEXHUB_API ?? "http://127.0.0.1:4317";
@@ -752,6 +773,86 @@ export function createProgram(env: CliEnvironment = {}): Command {
     );
   session.addCommand(reviewStatus);
 
+  const reviewFindings = new Command("review-findings").description(
+    "Inspect or update structured review findings",
+  );
+  jsonOption(reviewFindings.command("list").description("List review findings"))
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
+    .option("--limit <n>", "Maximum number of findings", parsePositiveInt)
+    .option("--cursor <cursor>", "Page cursor")
+    .action((sessionId: string, opts: ReviewFindingsListOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/sessions/${encodeURIComponent(sessionId)}/review-findings`,
+          {
+            query: omitQuery({
+              limit: opts.limit,
+              cursor: opts.cursor,
+            }),
+          },
+        );
+        printResult(env, opts, result, () => formatReviewFindings(result));
+      }),
+    );
+  jsonOption(reviewFindings.command("add").description("Add a review finding"))
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
+    .requiredOption(
+      "--reviewer-session <id>",
+      "Review worker session ID or unique prefix",
+    )
+    .requiredOption("--severity <severity>", "info, low, medium, or high")
+    .requiredOption("--summary <text>", "Finding summary")
+    .option("--details <text>", "Finding details")
+    .action((sessionId: string, opts: ReviewFindingsAddOptions) =>
+      runAction(env, opts, async () => {
+        const body = omitUndefined<CreateReviewFindingRequest>({
+          reviewer_session_id: opts.reviewerSession,
+          severity: parseReviewFindingSeverity(opts.severity),
+          summary: opts.summary,
+          details: opts.details,
+        });
+        const result = await client(program, env).post(
+          `/sessions/${encodeURIComponent(sessionId)}/review-findings`,
+          body,
+        );
+        printResult(env, opts, result, () =>
+          formatReviewFinding(unwrapRecord(result, "review_finding")),
+        );
+      }),
+    );
+  jsonOption(
+    reviewFindings.command("set").description("Set finding response status"),
+  )
+    .argument("<session-id>", SESSION_REF_DESCRIPTION)
+    .argument("<finding-id>", "Review finding ID")
+    .option("--status <status>", "open, accepted, rejected, or deferred")
+    .option("--response <text>", "Worker response text")
+    .action(
+      (sessionId: string, findingId: string, opts: ReviewFindingsSetOptions) =>
+        runAction(env, opts, async () => {
+          if (opts.status === undefined && opts.response === undefined) {
+            throw new Error("--status or --response is required");
+          }
+          const body = omitUndefined<UpdateReviewFindingRequest>({
+            status:
+              opts.status === undefined
+                ? undefined
+                : parseReviewFindingStatus(opts.status),
+            worker_response: opts.response,
+          });
+          const result = await client(program, env).put(
+            `/sessions/${encodeURIComponent(
+              sessionId,
+            )}/review-findings/${encodeURIComponent(findingId)}`,
+            body,
+          );
+          printResult(env, opts, result, () =>
+            formatReviewFinding(unwrapRecord(result, "review_finding")),
+          );
+        }),
+    );
+  session.addCommand(reviewFindings);
+
   jsonOption(session.command("stop").description("Stop a session"))
     .argument("<session-id>", SESSION_REF_DESCRIPTION)
     .action((sessionId: string, opts: BaseCommandOptions) =>
@@ -1046,6 +1147,30 @@ function parseOptionalItemType(
   throw new Error("--type is not a supported item type");
 }
 
+function parseReviewFindingSeverity(value: string): ReviewFindingSeverity {
+  if (
+    value === "info" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high"
+  ) {
+    return value;
+  }
+  throw new Error("--severity must be info, low, medium, or high");
+}
+
+function parseReviewFindingStatus(value: string): ReviewFindingStatus {
+  if (
+    value === "open" ||
+    value === "accepted" ||
+    value === "rejected" ||
+    value === "deferred"
+  ) {
+    return value;
+  }
+  throw new Error("--status must be open, accepted, rejected, or deferred");
+}
+
 function parseOptionalSessionStatus(
   value: string | undefined,
 ): WorkerSessionStatus | undefined {
@@ -1179,6 +1304,27 @@ function formatReviewStatus(value: unknown): string {
     .join(" ");
   const note = stringField(record, "note");
   return note ? `${flags}\nnote: ${note}` : flags;
+}
+
+function formatReviewFindings(value: unknown): string {
+  const findings = extractItems(value, "review_findings");
+  if (findings.length === 0) return "No review findings.";
+  return findings.map(formatReviewFinding).join("\n");
+}
+
+function formatReviewFinding(record: Record<string, unknown> | null): string {
+  if (!record) return "Review finding not found.";
+  const id = stringField(record, "id") ?? "(unknown id)";
+  const severity = stringField(record, "severity") ?? "unknown";
+  const status = stringField(record, "status") ?? "unknown";
+  const reviewer = stringField(record, "reviewer_session_id");
+  const summary = stringField(record, "summary") ?? "(no summary)";
+  const response = stringField(record, "worker_response");
+  const line = `${id} ${severity} ${status}: ${oneLine(summary, 140)}`;
+  const details = [];
+  if (reviewer) details.push(`reviewer=${reviewer}`);
+  if (response) details.push(`response="${oneLine(response, 140)}"`);
+  return details.length > 0 ? `${line} ${details.join(" ")}` : line;
 }
 
 function formatSessionInspectResult(value: unknown): string {

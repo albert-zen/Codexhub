@@ -24,6 +24,8 @@ export type ReviewGateStatusFlag =
   | "review_requested"
   | "review_addressed"
   | "ready_for_human_review";
+export type ReviewFindingSeverity = "info" | "low" | "medium" | "high";
+export type ReviewFindingStatus = "open" | "accepted" | "rejected" | "deferred";
 
 export type ItemType =
   | "agentmessage"
@@ -172,6 +174,19 @@ export interface ReviewGateStatus {
   review_addressed: boolean;
   ready_for_human_review: boolean;
   note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReviewFinding {
+  id: ID;
+  session_id: ID;
+  reviewer_session_id: ID | null;
+  severity: ReviewFindingSeverity;
+  status: ReviewFindingStatus;
+  summary: string;
+  details: string | null;
+  worker_response: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -5,6 +5,9 @@ import type {
   MessageMode,
   Page,
   Project,
+  ReviewFinding,
+  ReviewFindingSeverity,
+  ReviewFindingStatus,
   ReviewGateStatus,
   RunGroup,
   SenderType,
@@ -103,6 +106,18 @@ export interface UpdateReviewGateStatusRequest {
   note?: string | null | undefined;
 }
 
+export interface CreateReviewFindingRequest {
+  reviewer_session_id: string;
+  severity: ReviewFindingSeverity;
+  summary: string;
+  details?: string | null | undefined;
+}
+
+export interface UpdateReviewFindingRequest {
+  status?: ReviewFindingStatus | undefined;
+  worker_response?: string | null | undefined;
+}
+
 export interface SessionListQuery {
   project_id?: string | null | undefined;
   workspace_id?: string | null | undefined;
@@ -198,4 +213,12 @@ export interface MessageResponse {
 
 export interface ReviewGateStatusResponse {
   review_status: ReviewGateStatus;
+}
+
+export interface ReviewFindingResponse {
+  review_finding: ReviewFinding;
+}
+
+export interface ReviewFindingListResponse extends Page<ReviewFinding> {
+  review_findings: ReviewFinding[];
 }

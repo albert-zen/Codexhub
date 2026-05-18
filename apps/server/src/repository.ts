@@ -6,6 +6,9 @@ import {
   type ItemType,
   type MessageMode,
   type Project,
+  type ReviewFinding,
+  type ReviewFindingSeverity,
+  type ReviewFindingStatus,
   type ReviewGateStatus,
   type RunGroup,
   type SenderType,
@@ -76,6 +79,24 @@ export interface UpdateReviewGateStatusInput {
   review_addressed?: boolean;
   ready_for_human_review?: boolean;
   note?: string | null;
+}
+
+export interface CreateReviewFindingInput {
+  session_id: string;
+  reviewer_session_id?: string | null;
+  severity: ReviewFindingSeverity;
+  summary: string;
+  details?: string | null;
+}
+
+export interface UpdateReviewFindingInput {
+  status?: ReviewFindingStatus;
+  worker_response?: string | null;
+}
+
+export interface ReviewFindingListOptions {
+  limit?: number;
+  cursor?: string | null;
 }
 
 export interface ItemPageOptions {
@@ -679,6 +700,120 @@ export class HubRepository {
     return this.getReviewGateStatus(sessionId);
   }
 
+  createReviewFinding(input: CreateReviewFindingInput): ReviewFinding {
+    this.requireSession(input.session_id);
+    if (input.reviewer_session_id)
+      this.requireSession(input.reviewer_session_id);
+
+    const now = isoNow();
+    const finding: ReviewFinding = {
+      id: id("rfnd"),
+      session_id: input.session_id,
+      reviewer_session_id: input.reviewer_session_id ?? null,
+      severity: input.severity,
+      status: "open",
+      summary: input.summary,
+      details: input.details ?? null,
+      worker_response: null,
+      created_at: now,
+      updated_at: now,
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO review_findings (
+          id, session_id, reviewer_session_id, severity, status, summary,
+          details, worker_response, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        finding.id,
+        finding.session_id,
+        finding.reviewer_session_id,
+        finding.severity,
+        finding.status,
+        finding.summary,
+        finding.details,
+        finding.worker_response,
+        finding.created_at,
+        finding.updated_at,
+      );
+
+    return finding;
+  }
+
+  listReviewFindings(
+    sessionId: string,
+    options: ReviewFindingListOptions = {},
+  ): {
+    items: ReviewFinding[];
+    next_cursor: string | null;
+    limit: number;
+  } {
+    this.requireSession(sessionId);
+    const limit = clampLimit(options.limit, 50, 100);
+    const offset = parseCursor(options.cursor);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM review_findings
+         WHERE session_id = ?
+         ORDER BY created_at ASC, id ASC
+         LIMIT ? OFFSET ?`,
+      )
+      .all(sessionId, limit + 1, offset)
+      .map(reviewFindingFromRow);
+    const items = rows.slice(0, limit);
+    return {
+      items,
+      limit,
+      next_cursor: rows.length > limit ? String(offset + limit) : null,
+    };
+  }
+
+  getReviewFinding(sessionId: string, findingId: string): ReviewFinding | null {
+    this.requireSession(sessionId);
+    const row = this.db
+      .prepare(
+        "SELECT * FROM review_findings WHERE session_id = ? AND id = ? LIMIT 1",
+      )
+      .get(sessionId, findingId);
+    return row ? reviewFindingFromRow(row) : null;
+  }
+
+  updateReviewFinding(
+    sessionId: string,
+    findingId: string,
+    input: UpdateReviewFindingInput,
+  ): ReviewFinding {
+    this.requireReviewFinding(sessionId, findingId);
+    const allowed: Array<keyof UpdateReviewFindingInput> = [
+      "status",
+      "worker_response",
+    ];
+    const entries: Array<
+      [keyof UpdateReviewFindingInput, ReviewFindingStatus | string | null]
+    > = [];
+    for (const key of allowed) {
+      const value = input[key];
+      if (value !== undefined) entries.push([key, value]);
+    }
+    if (entries.length === 0) {
+      return this.requireReviewFinding(sessionId, findingId);
+    }
+
+    const assignments = entries.map(([key]) => `${key} = ?`).join(", ");
+    const values = entries.map(([, value]) => value);
+    const now = isoNow();
+    this.db
+      .prepare(
+        `UPDATE review_findings
+         SET ${assignments}, updated_at = ?
+         WHERE session_id = ? AND id = ?`,
+      )
+      .run(...values, now, sessionId, findingId);
+    return this.requireReviewFinding(sessionId, findingId);
+  }
+
   appendItem(sessionId: string, payload: unknown): Item {
     const session = this.requireSession(sessionId);
     const sequence = session.last_item_sequence + 1;
@@ -1135,6 +1270,15 @@ export class HubRepository {
     return taskSpec;
   }
 
+  private requireReviewFinding(
+    sessionId: string,
+    findingId: string,
+  ): ReviewFinding {
+    const finding = this.getReviewFinding(sessionId, findingId);
+    if (!finding) throw new Error(`review finding not found: ${findingId}`);
+    return finding;
+  }
+
   private requireMessage(id: string): import("@codexhub/core").Message {
     const row = this.db
       .prepare("SELECT * FROM messages WHERE id = ? LIMIT 1")
@@ -1347,6 +1491,22 @@ function reviewGateStatusFromRow(row: unknown): ReviewGateStatus {
     review_addressed: boolean(record, "review_addressed"),
     ready_for_human_review: boolean(record, "ready_for_human_review"),
     note: string(record, "note"),
+    created_at: requiredString(record, "created_at"),
+    updated_at: requiredString(record, "updated_at"),
+  };
+}
+
+function reviewFindingFromRow(row: unknown): ReviewFinding {
+  const record = asRow(row);
+  return {
+    id: requiredString(record, "id"),
+    session_id: requiredString(record, "session_id"),
+    reviewer_session_id: string(record, "reviewer_session_id"),
+    severity: requiredString(record, "severity") as ReviewFindingSeverity,
+    status: requiredString(record, "status") as ReviewFindingStatus,
+    summary: requiredString(record, "summary"),
+    details: string(record, "details"),
+    worker_response: string(record, "worker_response"),
     created_at: requiredString(record, "created_at"),
     updated_at: requiredString(record, "updated_at"),
   };

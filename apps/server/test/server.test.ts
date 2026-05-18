@@ -223,6 +223,88 @@ describe("Codexhub API", () => {
     expect(continued.message.session_id).toBe(sessionId);
   });
 
+  it("persists review findings and worker responses as observability records", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "review-findings-demo",
+      default_workspace_root: tempDir,
+    });
+    const implementation = await createFakeSession(
+      project.project.id,
+      "implementation-session",
+    );
+    const reviewer = await createFakeSession(
+      project.project.id,
+      "reviewer-session",
+    );
+    const sessionId = implementation.session.id;
+    const reviewerSessionId = reviewer.session.id;
+
+    const empty = await get(`/api/v1/sessions/${sessionId}/review-findings`);
+    expect(empty.review_findings).toHaveLength(0);
+    expect(empty.next_cursor).toBeNull();
+
+    const created = await post(
+      `/api/v1/sessions/${sessionId}/review-findings`,
+      {
+        reviewer_session_id: reviewerSessionId,
+        severity: "high",
+        summary: "Missing validation for review findings.",
+        details: "Add server and CLI coverage for create/list/update behavior.",
+      },
+    );
+    const findingId = created.review_finding.id;
+    expect(created.review_finding).toMatchObject({
+      session_id: sessionId,
+      reviewer_session_id: reviewerSessionId,
+      severity: "high",
+      status: "open",
+      summary: "Missing validation for review findings.",
+      worker_response: null,
+    });
+
+    const listed = await get(`/api/v1/sessions/${sessionId}/review-findings`);
+    expect(listed.session_id).toBe(sessionId);
+    expect(listed.review_findings).toHaveLength(1);
+    expect(listed.review_findings[0].id).toBe(findingId);
+
+    const updated = await put(
+      `/api/v1/sessions/${sessionId}/review-findings/${findingId}`,
+      {
+        status: "accepted",
+        worker_response: "Added focused persistence, API, and CLI tests.",
+      },
+    );
+    expect(updated.review_finding).toMatchObject({
+      id: findingId,
+      status: "accepted",
+      worker_response: "Added focused persistence, API, and CLI tests.",
+    });
+
+    const reviewStatus = await get(
+      `/api/v1/sessions/${sessionId}/review-status`,
+    );
+    expect(reviewStatus.review_status.implementation_done).toBe(false);
+
+    const missingReviewer = await app.inject({
+      method: "POST",
+      url: `/api/v1/sessions/${sessionId}/review-findings`,
+      payload: {
+        severity: "high",
+        summary: "Reviewer session is required.",
+      },
+    });
+    expect(missingReviewer.statusCode).toBe(400);
+    expect(missingReviewer.json().error.code).toBe("invalid_request");
+
+    const invalidStatus = await app.inject({
+      method: "PUT",
+      url: `/api/v1/sessions/${sessionId}/review-findings/${findingId}`,
+      payload: { status: "blocked" },
+    });
+    expect(invalidStatus.statusCode).toBe(400);
+    expect(invalidStatus.json().error.code).toBe("invalid_review_finding");
+  });
+
   it("returns not found for missing uuid-only session prefixes", async () => {
     const response = await app.inject({
       method: "GET",

@@ -12,9 +12,9 @@ agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
 
 The current product step is improving the manager-facing reading and follow-up
 loop after the first orchestration metadata pass. Worktree workspaces, task spec
-metadata, run groups, review-gate status, and terminal-session follow-up now
-exist as first-pass control plane records. The next gaps are clearer web
-actions, compact GUI creation/follow-up flows, structured review findings, and
+metadata, run groups, review-gate status, terminal-session follow-up, and
+structured review findings now exist as first-pass control plane records. The
+next gaps are clearer web actions, compact GUI creation/follow-up flows, and
 batch dashboards.
 
 ## V1 Outcome
@@ -71,8 +71,6 @@ The following work remains open next:
 - Keep roadmap and local issue docs synchronized with the closed baseline and
   next backlog (`#22`).
 - Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
-- Persist structured review findings and worker responses as observability, not
-  a validation gate (`#25`).
 - Add a run group dashboard for worker progress, latest messages, review state,
   and attention indicators (`#26`).
 - Add a CI-safe fake dogfood smoke script, with real Codex runs manual and
@@ -305,17 +303,18 @@ Remaining:
 
 ### Phase 9: Review Subagent Quality Gate
 
-Status: partially complete.
+Status: first-pass complete.
 
 Implemented:
 
 - Review-gate workflow docs define the read-only reviewer role and checklist.
 - Review-gate status metadata tracks worker/reviewer progress as explicit
   observability, not as automatic validation.
+- Structured review findings and worker accepted/rejected/deferred responses are
+  persisted through API and CLI surfaces as observability records (`#25`).
 
 Remaining:
 
-- Persist structured review findings and worker responses (`#25`).
 - Keep reviewer judgment focused on original task intent, acceptance criteria,
   tests, product boundaries, regressions, Windows/process risks, over-broad
   refactors, and documentation impact.

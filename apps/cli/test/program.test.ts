@@ -698,6 +698,161 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toContain("note: Ready for review.");
   });
 
+  it("adds structured review findings", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          review_finding: {
+            id: "rfnd_1",
+            session_id: "sess_1",
+            reviewer_session_id: "sess_review",
+            severity: "high",
+            status: "open",
+            summary: "Missing server coverage.",
+            details: "Add API tests.",
+            worker_response: null,
+          },
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "review-findings",
+      "add",
+      "sess_1",
+      "--reviewer-session",
+      "sess_review",
+      "--severity",
+      "high",
+      "--summary",
+      "Missing server coverage.",
+      "--details",
+      "Add API tests.",
+    ]);
+
+    expect(calls[0]?.url).toBe(
+      "http://api.test/sessions/sess_1/review-findings",
+    );
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      reviewer_session_id: "sess_review",
+      severity: "high",
+      summary: "Missing server coverage.",
+      details: "Add API tests.",
+    });
+    expect(output.join("").trim()).toContain(
+      "rfnd_1 high open: Missing server coverage.",
+    );
+  });
+
+  it("lists and updates review findings", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const env: CliEnvironment = {
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        const text = String(url);
+        if (init?.method === "PUT") {
+          return jsonResponse({
+            review_finding: {
+              id: "rfnd_1",
+              session_id: "sess_1",
+              reviewer_session_id: "sess_review",
+              severity: "high",
+              status: "accepted",
+              summary: "Missing server coverage.",
+              worker_response: "Added focused tests.",
+            },
+          });
+        }
+        if (text.includes("/review-findings")) {
+          return jsonResponse({
+            session_id: "sess_1",
+            items: [
+              {
+                id: "rfnd_1",
+                session_id: "sess_1",
+                reviewer_session_id: "sess_review",
+                severity: "high",
+                status: "open",
+                summary: "Missing server coverage.",
+                worker_response: null,
+              },
+            ],
+            review_findings: [
+              {
+                id: "rfnd_1",
+                session_id: "sess_1",
+                reviewer_session_id: "sess_review",
+                severity: "high",
+                status: "open",
+                summary: "Missing server coverage.",
+                worker_response: null,
+              },
+            ],
+            next_cursor: null,
+            limit: 20,
+          });
+        }
+        return jsonResponse({});
+      },
+      stdout: (text) => output.push(text),
+    };
+
+    await createProgram(env).parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "review-findings",
+      "list",
+      "sess_1",
+      "--limit",
+      "20",
+    ]);
+
+    await createProgram(env).parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "review-findings",
+      "set",
+      "sess_1",
+      "rfnd_1",
+      "--status",
+      "accepted",
+      "--response",
+      "Added focused tests.",
+    ]);
+
+    expect(calls[0]?.url).toBe(
+      "http://api.test/sessions/sess_1/review-findings?limit=20",
+    );
+    expect(calls[1]?.url).toBe(
+      "http://api.test/sessions/sess_1/review-findings/rfnd_1",
+    );
+    expect(calls[1]?.init?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+      status: "accepted",
+      worker_response: "Added focused tests.",
+    });
+    expect(output.join("")).toContain("rfnd_1 high open");
+    expect(output.join("")).toContain("rfnd_1 high accepted");
+    expect(output.join("")).toContain('response="Added focused tests."');
+  });
+
   it("prints readable recent traces with bounded transcript windows", async () => {
     const calls: string[] = [];
     const output: string[] = [];

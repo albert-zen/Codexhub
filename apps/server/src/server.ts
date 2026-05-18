@@ -1,6 +1,8 @@
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import type {
+  ReviewFindingSeverity,
+  ReviewFindingStatus,
   ItemType,
   MessageMode,
   SenderType,
@@ -12,9 +14,12 @@ import { canStartFollowUpSession, isTerminalStatus } from "@codexhub/core";
 import { openDatabase, type CodexHubDatabase } from "./database.js";
 import {
   HubRepository,
+  type CreateReviewFindingInput,
   type CreateTaskSpecInput,
   type ItemPageOptions,
+  type ReviewFindingListOptions,
   type SessionListOptions,
+  type UpdateReviewFindingInput,
   type UpdateReviewGateStatusInput,
 } from "./repository.js";
 import { CodexRuntime, SessionProcessUnavailableError } from "./runtime.js";
@@ -500,6 +505,65 @@ function registerApiRoutes(
     };
   });
 
+  app.get(path("/sessions/:id/review-findings"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    const query = asRecord(request.query);
+    const listOptions: ReviewFindingListOptions = {};
+    const limit = optionalNumber(query, "limit");
+    const cursor = optionalString(query, "cursor");
+    if (limit !== undefined) listOptions.limit = limit;
+    if (cursor) listOptions.cursor = cursor;
+    const page = state.repo.listReviewFindings(session.id, listOptions);
+    return {
+      ...page,
+      session_id: session.id,
+      review_findings: page.items,
+    };
+  });
+
+  app.post(path("/sessions/:id/review-findings"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    const body = asRecord(request.body);
+    const reviewerSessionId = requireSession(
+      state.repo,
+      requiredString(body, "reviewer_session_id"),
+    ).id;
+    const input = parseReviewFindingCreate(body);
+    return {
+      review_finding: state.repo.createReviewFinding({
+        session_id: session.id,
+        reviewer_session_id: reviewerSessionId,
+        ...input,
+      }),
+    };
+  });
+
+  app.put(path("/sessions/:id/review-findings/:findingId"), async (request) => {
+    const params = asRecord(request.params);
+    const session = requireSession(state.repo, requiredString(params, "id"));
+    const findingId = requiredString(params, "findingId");
+    if (!state.repo.getReviewFinding(session.id, findingId)) {
+      throw new HttpError(
+        404,
+        "review_finding_not_found",
+        "review finding not found",
+      );
+    }
+    return {
+      review_finding: state.repo.updateReviewFinding(
+        session.id,
+        findingId,
+        parseReviewFindingUpdate(asRecord(request.body)),
+      ),
+    };
+  });
+
   app.post(path("/sessions/:id/stop"), async (request) => {
     const session = requireSession(
       state.repo,
@@ -864,6 +928,91 @@ function parseReviewGateStatusUpdate(
     update.note = value;
   }
   return update;
+}
+
+function parseReviewFindingCreate(
+  record: Record<string, unknown>,
+): Omit<CreateReviewFindingInput, "session_id" | "reviewer_session_id"> {
+  const severity = parseReviewFindingSeverity(
+    requiredString(record, "severity"),
+  );
+  const summary = requiredString(record, "summary");
+  const details = optionalNullableReviewString(record, "details");
+  return details === undefined
+    ? { severity, summary }
+    : { severity, summary, details };
+}
+
+function parseReviewFindingUpdate(
+  record: Record<string, unknown>,
+): UpdateReviewFindingInput {
+  const update: UpdateReviewFindingInput = {};
+  if ("status" in record) {
+    const value = record.status;
+    if (typeof value !== "string") {
+      throw new HttpError(
+        400,
+        "invalid_review_finding",
+        "status must be string",
+      );
+    }
+    update.status = parseReviewFindingStatus(value);
+  }
+  if ("worker_response" in record) {
+    const value = record.worker_response;
+    if (value !== null && typeof value !== "string") {
+      throw new HttpError(
+        400,
+        "invalid_review_finding",
+        "worker_response must be string",
+      );
+    }
+    update.worker_response = value;
+  }
+  return update;
+}
+
+function parseReviewFindingSeverity(value: string): ReviewFindingSeverity {
+  if (
+    value === "info" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high"
+  ) {
+    return value;
+  }
+  throw new HttpError(
+    400,
+    "invalid_review_finding",
+    "severity must be info, low, medium, or high",
+  );
+}
+
+function parseReviewFindingStatus(value: string): ReviewFindingStatus {
+  if (
+    value === "open" ||
+    value === "accepted" ||
+    value === "rejected" ||
+    value === "deferred"
+  ) {
+    return value;
+  }
+  throw new HttpError(
+    400,
+    "invalid_review_finding",
+    "status must be open, accepted, rejected, or deferred",
+  );
+}
+
+function optionalNullableReviewString(
+  record: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value === "string") return value;
+  throw new HttpError(400, "invalid_review_finding", `${key} must be string`);
 }
 
 function parseTaskSpec(

@@ -76,6 +76,11 @@ For each review finding:
 
 The final handoff should include the review findings and responses.
 
+Codexhub can persist structured review findings and worker responses on a
+session. These records are for observability only: they do not block completion,
+change session state, or replace the human/manager decision about whether the
+work is acceptable.
+
 ## Documentation Check
 
 Every review should ask whether the task affects:

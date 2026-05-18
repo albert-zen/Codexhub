@@ -176,6 +176,28 @@ const migrations: Migration[] = [
         ON worker_sessions(previous_session_id);
     `,
   },
+  {
+    version: 6,
+    name: "review_findings",
+    sql: `
+      CREATE TABLE review_findings (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        reviewer_session_id TEXT REFERENCES worker_sessions(id) ON DELETE SET NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'low', 'medium', 'high')),
+        status TEXT NOT NULL CHECK (status IN ('open', 'accepted', 'rejected', 'deferred')),
+        summary TEXT NOT NULL,
+        details TEXT,
+        worker_response TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+
+      CREATE INDEX idx_review_findings_session_id ON review_findings(session_id, created_at, id);
+      CREATE INDEX idx_review_findings_reviewer_session_id ON review_findings(reviewer_session_id);
+      CREATE INDEX idx_review_findings_status ON review_findings(status);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

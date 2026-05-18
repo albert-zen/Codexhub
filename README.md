@@ -163,6 +163,16 @@ spawn.
 
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
+Structured review findings are also non-gating observability records. A review
+session can attach findings to an implementation session, and workers can record
+accepted, rejected, or deferred responses:
+
+```powershell
+$ReviewerSessionId = "sess_review_session_id"
+$Finding = pnpm --silent --filter @codexhub/cli dev -- session review-findings add $Session.session.id --reviewer-session $ReviewerSessionId --severity high --summary "Missing server test coverage." --details "Add focused API coverage for the changed route." --json | ConvertFrom-Json
+pnpm --filter @codexhub/cli dev -- session review-findings list $Session.session.id
+pnpm --silent --filter @codexhub/cli dev -- session review-findings set $Session.session.id $Finding.review_finding.id --status accepted --response "Added focused server and CLI tests." --json
+```
 
 Task spec metadata is an immutable input snapshot or reference stored on session
 start. Workers should execute from it, not edit it, unless the assigned task is

@@ -136,6 +136,16 @@ workspace. If pnpm reports a store permission error, run Codexhub from an
 environment that can write to the source install's recorded pnpm store or
 rehydrate the source checkout with a writable store.
 
+Web validation has one extra sandbox requirement. The web `check` script builds
+`@codexhub/core` first so direct package checks can resolve shared types. The
+web `build` and `test` scripts also run a preflight before Vite or Vitest. If
+the worker sandbox blocks `node:child_process` spawn, the commands fail early
+with an actionable EPERM message because Vite/Vitest need child processes for
+esbuild, worker pools, and Windows path resolution. Do not mark web build or
+test validation as passed from that sandbox; rerun the same pnpm command from a
+checkout or deliberate worker sandbox policy that permits Node child-process
+spawn.
+
 Review status is explicit observability metadata for manager agents and humans.
 It is not a validation gate and does not decide whether worker output is correct.
 

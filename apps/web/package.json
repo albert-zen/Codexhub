@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "build": "pnpm --filter @codexhub/core build && tsc -p tsconfig.json && node scripts/require-child-process-spawn.mjs build && vite build",
+    "check": "pnpm --filter @codexhub/core build && tsc -p tsconfig.json --noEmit",
     "dev": "vite --host 127.0.0.1 --port 4318",
-    "test": "vitest run --passWithNoTests"
+    "test": "pnpm --filter @codexhub/core build && node scripts/require-child-process-spawn.mjs test && vitest run"
   },
   "dependencies": {
     "@codexhub/core": "workspace:*",

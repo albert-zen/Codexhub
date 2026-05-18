@@ -154,6 +154,18 @@ building Codexhub with parallel workers.
   fragility caused by line wrapping. That was fixed before push, after
   `pnpm check`, server tests, CLI tests, and `pnpm format` passed.
 
+## 2026-05-19
+
+- Issue `#31` reproduced the Windows worktree web validation failure: direct
+  web type-checks need `@codexhub/core` built first, and Vite/Vitest can fail
+  with `spawn EPERM` when the worker sandbox blocks `node:child_process` child
+  creation. Web package scripts now build core before package validation and
+  fail early with an actionable preflight error for build/test instead of
+  letting Vite/Vitest emit opaque EPERM stacks. Workers must not report web
+  build or test validation as passed from a spawn-blocked sandbox; rerun the
+  same command from a checkout or deliberate sandbox policy that permits child
+  processes.
+
 ## Suggested Ownership Map
 
 - Core contracts and classifiers: one worker.

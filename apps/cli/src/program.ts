@@ -1139,6 +1139,15 @@ function formatLatest(value: unknown): string {
   ) {
     return managerMessage;
   }
+  if (
+    hasEnvelopeManagerMessage &&
+    managerMessage === null &&
+    (envelopeType === null ||
+      envelopeType === "agentmessage" ||
+      envelopeType === "all")
+  ) {
+    return "No agent message.";
+  }
 
   if (
     (envelopeType === "agentmessage" || envelopeType === "all") &&
@@ -1488,7 +1497,10 @@ function numberArrayField(
     : [];
 }
 
-function hasField(record: Record<string, unknown> | null, key: string): boolean {
+function hasField(
+  record: Record<string, unknown> | null,
+  key: string,
+): boolean {
   return record !== null && Object.prototype.hasOwnProperty.call(record, key);
 }
 

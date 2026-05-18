@@ -584,9 +584,7 @@ function latestManagerItem(
   return state.repo.latestCompletedAgentMessage(session.id);
 }
 
-function requiresStableAgentLatest(
-  type: ItemType | "all",
-): boolean {
+function requiresStableAgentLatest(type: ItemType | "all"): boolean {
   return type === "agentmessage" || type === "all";
 }
 
@@ -616,6 +614,7 @@ function requireSession(repo: HubRepository, reference: string): WorkerSession {
   }
   if (result.status === "not_found")
     throw new HttpError(404, "session_not_found", "session not found");
+  throw new HttpError(404, "session_not_found", "session not found");
 }
 
 function tryBuildWorkspace(input: Parameters<typeof buildWorkspace>[0]) {

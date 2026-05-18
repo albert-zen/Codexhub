@@ -722,9 +722,7 @@ describe("Codexhub API", () => {
         seeded,
         `/api/v1/sessions/${sessionId}/latest?type=agentmessage`,
       );
-      expect(stableLatest.last_agent_message).toBe(
-        "Previous complete answer.",
-      );
+      expect(stableLatest.last_agent_message).toBe("Previous complete answer.");
       expect(stableLatest.item).toMatchObject({
         type: "agentmessage",
         codex_method: "item/completed",

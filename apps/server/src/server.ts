@@ -4,6 +4,7 @@ import type {
   ItemType,
   MessageMode,
   SenderType,
+  TaskSpecMetadata,
   TranscriptPageOptions,
   WorkerSession,
 } from "@codexhub/core";
@@ -353,9 +354,10 @@ function registerApiRoutes(
       previous_session_id: previousSession.id,
     });
     const previousTaskSpec = state.repo.getTaskSpec(previousSession.id);
-    const taskSpec =
-      parseTaskSpec(optionalRecord(body, "task_spec")) ??
-      copyTaskSpec(previousTaskSpec);
+    const taskSpec = mergeTaskSpec(
+      previousTaskSpec,
+      optionalRecord(body, "task_spec"),
+    );
     if (taskSpec) {
       state.repo.createTaskSpec({ session_id: session.id, ...taskSpec });
     }
@@ -882,9 +884,54 @@ function parseTaskSpec(
   return hasValue ? taskSpec : null;
 }
 
+const taskSpecFields = [
+  "ref",
+  "title",
+  "intent",
+  "scope",
+  "acceptance_criteria",
+  "raw",
+] as const;
+
+type TaskSpecField = (typeof taskSpecFields)[number];
+type TaskSpecInputMetadata = Omit<CreateTaskSpecInput, "session_id">;
+
+function mergeTaskSpec(
+  source: TaskSpecMetadata | null,
+  overrides: Record<string, unknown> | null,
+): TaskSpecInputMetadata | null {
+  const taskSpec = copyTaskSpec(source);
+  if (!overrides) return taskSpec;
+
+  const merged = taskSpec ?? emptyTaskSpec();
+  let hasOverrideValue = false;
+  for (const field of taskSpecFields) {
+    const value = overrides[field];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string") {
+      throw new HttpError(400, "invalid_task_spec", `${field} must be string`);
+    }
+    merged[field] = value;
+    hasOverrideValue ||= value.trim() !== "";
+  }
+
+  return taskSpec || hasOverrideValue ? merged : null;
+}
+
+function emptyTaskSpec(): Record<TaskSpecField, string | null> {
+  return {
+    ref: null,
+    title: null,
+    intent: null,
+    scope: null,
+    acceptance_criteria: null,
+    raw: null,
+  };
+}
+
 function copyTaskSpec(
-  taskSpec: import("@codexhub/core").TaskSpecMetadata | null,
-): Omit<CreateTaskSpecInput, "session_id"> | null {
+  taskSpec: TaskSpecMetadata | null,
+): TaskSpecInputMetadata | null {
   if (!taskSpec) return null;
   return {
     ref: taskSpec.ref,

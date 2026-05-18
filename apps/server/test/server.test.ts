@@ -268,7 +268,9 @@ describe("Codexhub API", () => {
           ref: "https://github.com/albert-zen/Codexhub/issues/23",
           title: "Terminal follow-up",
           intent: "Continue work without reviving a dead process.",
+          scope: "Start a new session linked to the terminal source.",
           acceptance_criteria: "A new session records previous_session_id.",
+          raw: "Terminal source task spec.",
         });
         repo.updateSession(previous.id, {
           status,
@@ -319,6 +321,10 @@ describe("Codexhub API", () => {
           session_id: followUpSessionId,
           ref: "https://github.com/albert-zen/Codexhub/issues/23",
           title: "Terminal follow-up",
+          intent: "Continue work without reviving a dead process.",
+          scope: "Start a new session linked to the terminal source.",
+          acceptance_criteria: "A new session records previous_session_id.",
+          raw: "Terminal source task spec.",
         });
         expect(body.session.last_agent_message).toContain(
           `Follow up after ${status}.`,
@@ -354,6 +360,109 @@ describe("Codexhub API", () => {
       }
     },
   );
+
+  it("merges follow-up task spec overrides field-by-field", async () => {
+    const dbPath = join(tempDir, "follow-up-task-spec-merge.sqlite");
+    const sourceTaskSpec = {
+      ref: "https://github.com/albert-zen/Codexhub/issues/23",
+      title: "Source task spec",
+      intent: "Carry source intent into follow-up sessions.",
+      scope: "Preserve source scope unless the follow-up overrides it.",
+      acceptance_criteria: "Follow-up sessions inherit unspecified metadata.",
+      raw: "Original task spec body.",
+    };
+    const database = openDatabase({ path: dbPath });
+    const seeded = (() => {
+      const repo = new HubRepository(database.db);
+      const project = repo.createProject({
+        name: "follow-up-task-spec-merge",
+        default_codex_options: { fake: true },
+      });
+      const workspace = repo.createWorkspace({
+        project_id: project.id,
+        source_type: "local",
+        path: join(tempDir, "follow-up-task-spec-merge-workspace"),
+        cwd: join(tempDir, "follow-up-task-spec-merge-workspace"),
+      });
+      const previous = repo.createSession({
+        project_id: project.id,
+        workspace_id: workspace.id,
+      });
+      repo.createTaskSpec({
+        session_id: previous.id,
+        ...sourceTaskSpec,
+      });
+      repo.updateSession(previous.id, {
+        status: "completed",
+        process_pid: "pid-completed",
+        ended_at: new Date().toISOString(),
+      });
+      return { previousSessionId: previous.id };
+    })();
+    database.close();
+
+    const seededServer = await createServer({ dbPath, logger: false });
+    try {
+      let followUpCount = 0;
+      async function startFollowUp(taskSpec?: unknown): Promise<any> {
+        followUpCount += 1;
+        const payload: Record<string, unknown> = {
+          initial_message: `Follow up ${followUpCount}.`,
+        };
+        if (taskSpec !== undefined) payload.task_spec = taskSpec;
+
+        const response = await seededServer.inject({
+          method: "POST",
+          url: `/api/v1/sessions/${seeded.previousSessionId}/follow-up`,
+          payload,
+        });
+        expect(response.statusCode).toBe(200);
+        return response.json();
+      }
+
+      const inherited = await startFollowUp();
+      expect(inherited.task_spec).toMatchObject({
+        session_id: inherited.session.id,
+        ...sourceTaskSpec,
+      });
+
+      const partial = await startFollowUp({
+        title: "Follow-up title override",
+      });
+      expect(partial.task_spec).toMatchObject({
+        session_id: partial.session.id,
+        ...sourceTaskSpec,
+        title: "Follow-up title override",
+      });
+
+      const nullPreserved = await startFollowUp({
+        ref: null,
+        title: "Null fields are treated as omitted",
+        acceptance_criteria: null,
+      });
+      expect(nullPreserved.task_spec).toMatchObject({
+        session_id: nullPreserved.session.id,
+        ...sourceTaskSpec,
+        title: "Null fields are treated as omitted",
+      });
+
+      const fullTaskSpec = {
+        ref: "docs/task-specs/follow-up.md",
+        title: "Full follow-up override",
+        intent: "Replace every source field.",
+        scope: "Only the explicit override applies.",
+        acceptance_criteria: "Full overrides still replace all fields.",
+        raw: "Full override body.",
+      };
+      const full = await startFollowUp(fullTaskSpec);
+      expect(full.task_spec).toMatchObject({
+        session_id: full.session.id,
+        ...fullTaskSpec,
+      });
+    } finally {
+      await seededServer.close();
+    }
+  });
 
   it("rejects follow-up sessions from non-terminal source sessions", async () => {
     const project = await post("/api/v1/projects", {

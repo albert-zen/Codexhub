@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptEntry } from "@codexhub/core";
 
-import { conversationEntries } from "./transcript-view.js";
+import {
+  RECENT_TRANSCRIPT_CURSOR,
+  conversationEntries,
+  conversationWindow,
+} from "./transcript-view.js";
 
 describe("conversationEntries", () => {
   it("keeps sent user messages, completed agent messages, and tools", () => {
@@ -57,6 +61,66 @@ describe("conversationEntries", () => {
     ]);
 
     expect(entries).toEqual([]);
+  });
+
+  it("uses the latest visible entries from a larger recent transcript fetch", () => {
+    const entries = conversationWindow(
+      [
+        transcriptEntry({
+          id: "message:old",
+          sequence: 1,
+          kind: "message",
+          role: "human",
+          source: "message",
+          text: "Older prompt.",
+        }),
+        transcriptEntry({
+          id: "debug:state",
+          sequence: 2,
+          kind: "debug",
+          role: "debug",
+          text: "state changed",
+          item_type: "state",
+        }),
+        transcriptEntry({
+          id: "agent:draft",
+          sequence: 3,
+          kind: "agent_message",
+          role: "agent",
+          text: "par tial",
+          codex_method: "item/agentMessage/delta",
+        }),
+        transcriptEntry({
+          id: "message:latest",
+          sequence: 4,
+          kind: "message",
+          role: "human",
+          source: "message",
+          text: "Latest prompt.",
+        }),
+        transcriptEntry({
+          id: "agent:latest",
+          sequence: 5,
+          kind: "agent_message",
+          role: "agent",
+          text: "Latest answer.",
+          codex_method: "item/completed",
+        }),
+      ],
+      2,
+    );
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "message:latest",
+      "agent:latest",
+    ]);
+  });
+
+  it("describes the default cursor as a recent transcript request", () => {
+    expect(RECENT_TRANSCRIPT_CURSOR).toEqual({
+      afterSequence: null,
+      recent: true,
+    });
   });
 });
 

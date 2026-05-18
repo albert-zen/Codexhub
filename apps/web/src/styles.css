@@ -818,7 +818,9 @@ pre {
 
 @media (max-width: 760px) {
   .app-shell {
-    min-height: auto;
+    overflow: hidden;
+    height: 100vh;
+    min-height: 100vh;
     padding: 12px;
   }
 
@@ -834,6 +836,7 @@ pre {
 
   .workspace-grid {
     grid-template-columns: 1fr;
+    overflow: auto;
   }
 
   .project-panel .list {
@@ -846,6 +849,9 @@ pre {
 
   .detail-panel {
     grid-column: auto;
+    overflow: hidden;
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
     min-height: 0;
   }
 

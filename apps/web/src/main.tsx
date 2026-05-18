@@ -16,7 +16,11 @@ import {
   getSessionActionAvailability,
   type SessionAction,
 } from "./session-actions.js";
-import { conversationEntries } from "./transcript-view.js";
+import {
+  RECENT_TRANSCRIPT_CURSOR,
+  type TranscriptCursor,
+  conversationWindow,
+} from "./transcript-view.js";
 import "./styles.css";
 
 type SendMessageMode = Exclude<MessageMode, "initial">;
@@ -40,7 +44,7 @@ interface SessionDetail {
 }
 
 interface LoadDetailOptions {
-  transcriptAfter: number | null;
+  transcriptCursor: TranscriptCursor;
   rawItemType: ItemType | "all";
   rawItemAfter: number | null;
   includeRawItems: boolean;
@@ -59,7 +63,8 @@ const ITEM_TYPES: Array<ItemType | "all"> = [
   "reasoning",
   "raw",
 ];
-const TRANSCRIPT_PAGE_LIMIT = 50;
+const VISIBLE_TRANSCRIPT_LIMIT = 50;
+const TRANSCRIPT_FETCH_LIMIT = 100;
 const ITEM_PAGE_LIMIT = 50;
 
 class ApiError extends Error {
@@ -92,7 +97,7 @@ function entityFrom<T>(body: unknown, key: string): T {
 }
 
 function queryString(
-  params: Record<string, string | number | null | undefined>,
+  params: Record<string, string | number | boolean | null | undefined>,
 ): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -176,17 +181,19 @@ async function fetchSession(sessionId: ID): Promise<SessionDetail> {
 
 async function fetchTranscript(
   sessionId: ID,
-  afterSequence: number | null,
+  cursor: TranscriptCursor,
 ): Promise<TranscriptPage> {
   const query = queryString({
-    limit: TRANSCRIPT_PAGE_LIMIT,
-    after_sequence: afterSequence,
+    limit: TRANSCRIPT_FETCH_LIMIT,
+    after_sequence: cursor.recent ? null : cursor.afterSequence,
+    recent: cursor.recent ? true : null,
   });
   const nestedPath = `/sessions/${encodeURIComponent(sessionId)}/transcript${query}`;
   const flatPath = `/transcript${queryString({
     session_id: sessionId,
-    limit: TRANSCRIPT_PAGE_LIMIT,
-    after_sequence: afterSequence,
+    limit: TRANSCRIPT_FETCH_LIMIT,
+    after_sequence: cursor.recent ? null : cursor.afterSequence,
+    recent: cursor.recent ? true : null,
   })}`;
   const body = await withFallback(
     () => request<unknown>(nestedPath),
@@ -201,7 +208,7 @@ async function fetchTranscript(
     limit:
       isObject(body) && typeof body.limit === "number"
         ? body.limit
-        : TRANSCRIPT_PAGE_LIMIT,
+        : TRANSCRIPT_FETCH_LIMIT,
   };
 }
 
@@ -388,12 +395,18 @@ function sequenceRangeLabel(values: number[]): string {
 
 function transcriptWindowLabel(
   entries: TranscriptEntry[],
-  afterSequence: number | null,
+  cursor: TranscriptCursor,
 ): string {
-  if (entries.length === 0) return `after entry #${afterSequence ?? 0}`;
-  const first = entries[0]?.sequence ?? afterSequence ?? 0;
+  const prefix = cursor.recent ? "recent " : "";
+  if (entries.length === 0)
+    return cursor.recent
+      ? "recent entries"
+      : `after entry #${cursor.afterSequence ?? 0}`;
+  const first = entries[0]?.sequence ?? cursor.afterSequence ?? 0;
   const last = entries[entries.length - 1]?.sequence ?? first;
-  return first === last ? `entry #${first}` : `entries #${first}-${last}`;
+  return first === last
+    ? `${prefix}entry #${first}`
+    : `${prefix}entries #${first}-${last}`;
 }
 
 function itemWindowLabel(items: Item[], afterSequence: number | null): string {
@@ -441,8 +454,12 @@ function App() {
   const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>(
     [],
   );
-  const [transcriptAfter, setTranscriptAfter] = useState<number | null>(null);
-  const [transcriptHistory, setTranscriptHistory] = useState<number[]>([]);
+  const [transcriptCursor, setTranscriptCursor] = useState<TranscriptCursor>(
+    RECENT_TRANSCRIPT_CURSOR,
+  );
+  const [transcriptHistory, setTranscriptHistory] = useState<
+    TranscriptCursor[]
+  >([]);
   const [transcriptNextCursor, setTranscriptNextCursor] = useState<
     string | null
   >(null);
@@ -477,9 +494,21 @@ function App() {
   );
 
   const conversationTranscriptEntries = useMemo(
-    () => conversationEntries(transcriptEntries),
+    () => conversationWindow(transcriptEntries, VISIBLE_TRANSCRIPT_LIMIT),
     [transcriptEntries],
   );
+
+  const previousTranscriptCursor = useMemo(() => {
+    const firstSequence = transcriptEntries[0]?.sequence;
+    if (firstSequence === undefined || firstSequence <= 1) return null;
+    return {
+      afterSequence: Math.max(0, firstSequence - TRANSCRIPT_FETCH_LIMIT - 1),
+      recent: false,
+    };
+  }, [transcriptEntries]);
+
+  const canLoadPreviousTranscript =
+    transcriptHistory.length > 0 || previousTranscriptCursor !== null;
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
@@ -532,7 +561,7 @@ function App() {
         const [nextSessionDetail, nextTranscriptPage, nextItemPage] =
           await Promise.all([
             fetchSession(sessionId),
-            fetchTranscript(sessionId, options.transcriptAfter),
+            fetchTranscript(sessionId, options.transcriptCursor),
             rawItemsPromise,
           ]);
         setSelectedSession(nextSessionDetail.session);
@@ -560,7 +589,7 @@ function App() {
     if (selectedProjectId) await loadSessions(selectedProjectId);
     if (selectedSessionId)
       await loadDetail(selectedSessionId, {
-        transcriptAfter,
+        transcriptCursor,
         rawItemType: itemType,
         rawItemAfter: itemAfter,
         includeRawItems: showRawItems,
@@ -573,7 +602,7 @@ function App() {
     selectedProjectId,
     selectedSessionId,
     showRawItems,
-    transcriptAfter,
+    transcriptCursor,
   ]);
 
   useEffect(() => {
@@ -594,7 +623,7 @@ function App() {
       setSelectedSession(null);
       setTaskSpec(null);
       setTranscriptEntries([]);
-      setTranscriptAfter(null);
+      setTranscriptCursor(RECENT_TRANSCRIPT_CURSOR);
       setTranscriptHistory([]);
       setTranscriptNextCursor(null);
       setItems([]);
@@ -603,12 +632,12 @@ function App() {
       setItemNextCursor(null);
       return;
     }
-    setTranscriptAfter(null);
+    setTranscriptCursor(RECENT_TRANSCRIPT_CURSOR);
     setTranscriptHistory([]);
     setItemAfter(null);
     setItemHistory([]);
     void loadDetail(selectedSessionId, {
-      transcriptAfter: null,
+      transcriptCursor: RECENT_TRANSCRIPT_CURSOR,
       rawItemType: itemType,
       rawItemAfter: null,
       includeRawItems: showRawItems,
@@ -668,10 +697,11 @@ function App() {
     if (!selectedSession || transcriptNextCursor === null) return;
     const nextAfter = Number(transcriptNextCursor);
     if (!Number.isInteger(nextAfter)) return;
-    setTranscriptHistory((current) => [...current, transcriptAfter ?? 0]);
-    setTranscriptAfter(nextAfter);
+    const nextCursor = { afterSequence: nextAfter, recent: false };
+    setTranscriptHistory((current) => [...current, transcriptCursor]);
+    setTranscriptCursor(nextCursor);
     await loadDetail(selectedSession.id, {
-      transcriptAfter: nextAfter,
+      transcriptCursor: nextCursor,
       rawItemType: itemType,
       rawItemAfter: itemAfter,
       includeRawItems: showRawItems,
@@ -679,13 +709,16 @@ function App() {
   }
 
   async function handlePreviousTranscript() {
-    if (!selectedSession || transcriptHistory.length === 0) return;
+    if (!selectedSession) return;
     const previousHistory = transcriptHistory.slice(0, -1);
-    const previousAfter = transcriptHistory[transcriptHistory.length - 1] ?? 0;
+    const previousCursor =
+      transcriptHistory[transcriptHistory.length - 1] ??
+      previousTranscriptCursor;
+    if (!previousCursor) return;
     setTranscriptHistory(previousHistory);
-    setTranscriptAfter(previousAfter === 0 ? null : previousAfter);
+    setTranscriptCursor(previousCursor);
     await loadDetail(selectedSession.id, {
-      transcriptAfter: previousAfter === 0 ? null : previousAfter,
+      transcriptCursor: previousCursor,
       rawItemType: itemType,
       rawItemAfter: itemAfter,
       includeRawItems: showRawItems,
@@ -699,7 +732,7 @@ function App() {
     setItemHistory((current) => [...current, itemAfter ?? 0]);
     setItemAfter(nextAfter);
     await loadDetail(selectedSession.id, {
-      transcriptAfter,
+      transcriptCursor,
       rawItemType: itemType,
       rawItemAfter: nextAfter,
       includeRawItems: showRawItems,
@@ -713,7 +746,7 @@ function App() {
     setItemHistory(previousHistory);
     setItemAfter(previousAfter === 0 ? null : previousAfter);
     await loadDetail(selectedSession.id, {
-      transcriptAfter,
+      transcriptCursor,
       rawItemType: itemType,
       rawItemAfter: previousAfter === 0 ? null : previousAfter,
       includeRawItems: showRawItems,
@@ -870,9 +903,10 @@ function App() {
                     <p>
                       {transcriptWindowLabel(
                         transcriptEntries,
-                        transcriptAfter,
+                        transcriptCursor,
                       )}
-                      ; transcript page limit {TRANSCRIPT_PAGE_LIMIT}
+                      ; fetched {TRANSCRIPT_FETCH_LIMIT}, showing up to{" "}
+                      {VISIBLE_TRANSCRIPT_LIMIT}
                     </p>
                   </div>
                   <div className="item-controls">
@@ -890,7 +924,7 @@ function App() {
                       className="button button-secondary button-compact"
                       type="button"
                       onClick={() => void handlePreviousTranscript()}
-                      disabled={loadingDetail || transcriptHistory.length === 0}
+                      disabled={loadingDetail || !canLoadPreviousTranscript}
                     >
                       Previous
                     </button>

@@ -63,38 +63,22 @@ ownership conflict display.
 - Capture dogfood friction in `docs/subagent-ops-log.md` when a task reveals a
   reusable operations lesson.
 
-## Next Backlog
+## Current Backlog
 
-The remaining GitHub issue wave is `#19` through `#25`. GitHub remains the
-execution source of truth for issue state; this section keeps the local
-manager-agent reading path aligned with that tracker.
+GitHub currently has one open first-stage hardening issue: `#40`. Issues
+`#19` through `#39` are closed and represent implemented baseline unless a later
+dogfood run opens a narrower regression or UX follow-up.
 
-1. `#19 fix(transcript): add conversation-level transcript projection`
-   - Add transcript entries distinct from raw items, with pagination by
-     conversation entry and complete agent messages across raw item page
-     boundaries.
-   - Blocks `#20` and `#23`.
-2. `#20 fix(web): consume conversation transcript in session detail`
-   - Make web session detail default to prompt, complete agent message, and
-     collapsed tool/debug transcript entries instead of raw item windows.
-   - Depends on `#19`.
-3. `#21 fix(web): explain disabled session actions`
-   - Make unavailable steer/continue/stop/complete actions explain state and
-     content requirements, especially terminal sessions.
-   - Can run in parallel with `#19`.
-4. `#22 docs(roadmap): reconcile implemented phases and next backlog`
-   - Keep `docs/roadmap.md`, `docs/github-issues.md`, and dogfood findings
-     current after the `#1` through `#18` closure and the `#19` through `#27`
-     issue wave.
-5. `#24 feat(web): add session creation and follow-up flow`
-   - Let humans start sessions and terminal-session follow-ups from the GUI with
-     compact task-spec inputs and visible errors.
-   - Depends on `#21` and the implemented `#23` API/CLI follow-up path.
-6. `#25 feat(review): persist review findings and worker responses`
-   - Store structured reviewer findings and worker accepted/rejected/deferred
-     responses as observability records.
-   - Can run after `#19`; keep migrations separate from the implemented
-     session follow-up relation.
+1. `#40 feat(runtime): keep worker sessions continuable across server hot reloads`
+   - Move Codex `app-server` child-process ownership and stdio handles out of
+     the hot-reloading HTTP server, or add an equally explicit supervisor
+     boundary.
+   - Let the HTTP server prove a persisted session id maps to a live supervised
+     Codex runtime before accepting `steer` or `continue`.
+   - Keep startup reconciliation conservative for any session the supervisor
+     cannot prove is attached and healthy.
+   - Preserve the current structured `session_process_unavailable` plus
+     follow-up-session fallback for unrecoverable orphan sessions.
 
 ## Later Closed Follow-Ups
 

@@ -10,12 +10,14 @@ The first usable loop now exists:
 create project/workspace -> start session -> save raw items -> read latest
 agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
 
-The current product step is improving the manager-facing reading and follow-up
-loop after the first orchestration metadata pass. Worktree workspaces, task spec
-metadata, run groups, review-gate status, terminal-session follow-up, and
-structured review findings now exist as first-pass control plane records. The
-next gaps are clearer web actions, compact GUI creation/follow-up flows, and
-continued batch-supervision polish.
+The current product step is runtime durability after the first orchestration
+metadata pass. Worktree workspaces, task spec metadata, run groups,
+review-gate status, terminal-session follow-up, structured review findings,
+short session id resolution, chat-style session detail, run group dashboards,
+and fake-mode dogfood smoke now exist as first-pass control plane records. The
+remaining first-stage hardening gap is a durable Codex runtime/supervisor
+boundary that can survive HTTP server reloads without pretending orphaned
+sessions are still live.
 
 ## V1 Outcome
 
@@ -56,24 +58,21 @@ The repository currently contains:
 - Top-level `pnpm build`, `pnpm check`, `pnpm test`, and `pnpm format` scripts
   all pass.
 
-Issues `#1` through `#18` are closed and represent the implemented baseline for
+Issues `#1` through `#39` are closed and represent the implemented baseline for
 payload fixtures, restart reconciliation, CLI smoke coverage, API route policy,
-README loop docs, workspace cleanup/worktrees, web item-window pagination, task
-spec metadata, minimal run groups, CI warning cleanup, and review-gate status
-metadata.
+README loop docs, workspace cleanup/worktrees, web item-window pagination,
+task spec metadata, minimal run groups, CI warning cleanup, review-gate status
+metadata, conversation transcript projection, GUI creation/follow-up,
+terminal-session follow-up, structured review findings, worktree sandbox
+hardening, short session ids, stable latest-agent-message projection, and
+chat-style session detail.
 
 The following work remains open next:
 
-- Add a conversation-level transcript projection so manager reads page through
-  complete transcript entries instead of raw item deltas (`#19`).
-- Make the web session detail consume that conversation transcript by default
-  (`#20`).
-- Explain disabled web session actions, especially terminal states that require
-  follow-up instead of sending to a dead session (`#21`).
-- Keep roadmap and local issue docs synchronized with the closed baseline and
-  next backlog (`#22`).
-- Add compact GUI flows for starting sessions and follow-up sessions (`#24`).
-- Continue tuning the dogfood smoke output as real runs reveal new friction.
+- Introduce a real runtime/supervisor boundary so continuable sessions can
+  survive HTTP server hot reloads when the underlying worker runtime is still
+  alive (`#40`).
+- Continue tuning dogfood smoke output as real runs reveal new friction.
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
 GitHub issue tracker is the execution source of truth.
@@ -263,8 +262,8 @@ Status: complete for the first hardening pass.
 
 ### Phase 7: Readable Trace And Query Ergonomics
 
-Status: first-pass complete for readable result/trace shortcuts; conversation
-projection remains open.
+Status: complete for readable result/trace shortcuts and the first
+conversation-level transcript projection.
 
 Implemented:
 
@@ -276,14 +275,14 @@ Implemented:
   dump a full raw session history.
 - Web item-window pagination exists for raw/session item inspection.
 
-Remaining:
+Implemented:
 
-- Add a conversation-level transcript projection that produces complete prompt,
-  agent-message, and tool/debug entries independent of raw item windows (`#19`).
-- Make the web session detail consume that conversation transcript by default
-  instead of relying on raw item windows (`#20`).
-- Page by transcript entry cursor/window so Manager Agents can inspect complete
-  conversation slices without rereading earlier entries (`#19`).
+- Conversation-level transcript projection produces complete prompt,
+  agent-message, and collapsed tool/debug entries.
+- Web session detail consumes the conversation transcript by default and keeps
+  raw item inspection as an explicit debug mode.
+- Transcript reads are bounded by default and support cursor-based movement for
+  older slices.
 
 ### Phase 8: Explicit Task Specs
 

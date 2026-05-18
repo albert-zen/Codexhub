@@ -540,13 +540,27 @@ function latestResponse(
     includeSession,
     type,
   );
+  const stableLatest = includeSession && requiresStableAgentLatest(type);
+  const stableLastAgentMessage = stableLatest
+    ? (item?.text_excerpt ?? null)
+    : null;
+  const responseSession = stableLatest
+    ? {
+        ...session,
+        last_agent_message_item_id: item?.id ?? null,
+        last_agent_message: stableLastAgentMessage,
+        last_agent_message_at: item?.created_at ?? null,
+      }
+    : session;
   return includeSession
     ? {
         session_id: session.id,
         type,
         item,
-        session,
-        last_agent_message: session.last_agent_message,
+        session: responseSession,
+        last_agent_message: stableLatest
+          ? stableLastAgentMessage
+          : session.last_agent_message,
       }
     : { session_id: session.id, type, item };
 }
@@ -562,19 +576,29 @@ function latestManagerItem(
     return item;
   }
 
-  if (!session.last_agent_message) return null;
-
-  const source = session.last_agent_message_item_id
+  const projectedSource = session.last_agent_message_item_id
     ? state.repo.getItem(session.last_agent_message_item_id)
-    : item;
-  if (!source) return null;
-  return { ...source, text_excerpt: session.last_agent_message };
+    : null;
+  if (isCompletedAgentMessage(projectedSource)) return projectedSource;
+
+  return state.repo.latestCompletedAgentMessage(session.id);
 }
 
 function requiresStableAgentLatest(
   type: ItemType | "all",
 ): boolean {
   return type === "agentmessage" || type === "all";
+}
+
+function isCompletedAgentMessage(
+  item: import("@codexhub/core").Item | null,
+): boolean {
+  return (
+    item?.type === "agentmessage" &&
+    item.codex_method === "item/completed" &&
+    typeof item.text_excerpt === "string" &&
+    item.text_excerpt.trim() !== ""
+  );
 }
 
 function requireSession(repo: HubRepository, reference: string): WorkerSession {

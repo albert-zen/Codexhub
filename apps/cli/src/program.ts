@@ -1121,9 +1121,12 @@ function formatLatest(value: unknown): string {
 
   const envelope = asRecord(value);
   const envelopeType = stringField(envelope, "type");
+  const hasEnvelopeManagerMessage = hasField(envelope, "last_agent_message");
   const managerMessage =
     stringField(envelope, "last_agent_message") ??
-    stringField(asRecord(envelope?.session), "last_agent_message");
+    (hasEnvelopeManagerMessage
+      ? null
+      : stringField(asRecord(envelope?.session), "last_agent_message"));
   const itemRecord = asRecord(envelope?.item);
   const latestRecord = asRecord(envelope?.latest);
   if (
@@ -1483,6 +1486,10 @@ function numberArrayField(
   return Array.isArray(value)
     ? value.filter((entry): entry is number => typeof entry === "number")
     : [];
+}
+
+function hasField(record: Record<string, unknown> | null, key: string): boolean {
+  return record !== null && Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function isAgentMessageDelta(record: Record<string, unknown> | null): boolean {

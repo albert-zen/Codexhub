@@ -239,6 +239,43 @@ describe("codexhub commands", () => {
     expect(output.join("").trim()).toBe("Previous complete answer.");
   });
 
+  it("prints repaired latest text when nested session projection is polluted", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "all",
+          item: {
+            id: "item_completed",
+            type: "agentmessage",
+            codex_method: "item/completed",
+            text_excerpt: "Recovered complete answer.",
+          },
+          session: {
+            last_agent_message_item_id: "item_delta",
+            last_agent_message: "Polluted draft.",
+          },
+          last_agent_message: "Recovered complete answer.",
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
+      "--type",
+      "all",
+    ]);
+
+    expect(output.join("").trim()).toBe("Recovered complete answer.");
+  });
+
   it("does not print an agent delta when stable latest is empty", async () => {
     const output: string[] = [];
     const program = createProgram({
@@ -328,6 +365,36 @@ describe("codexhub commands", () => {
       "sess_1",
       "--type",
       "all",
+    ]);
+
+    expect(output.join("").trim()).toBe("No agent message.");
+  });
+
+  it("does not fall back to a polluted nested session latest", async () => {
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async () =>
+        jsonResponse({
+          session_id: "sess_1",
+          type: "agentmessage",
+          item: null,
+          session: {
+            last_agent_message_item_id: "item_delta",
+            last_agent_message: "Polluted draft.",
+          },
+          last_agent_message: null,
+        }),
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "session",
+      "latest",
+      "sess_1",
     ]);
 
     expect(output.join("").trim()).toBe("No agent message.");

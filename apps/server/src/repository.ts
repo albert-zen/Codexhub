@@ -834,6 +834,21 @@ export class HubRepository {
     return row ? itemFromRow(row) : null;
   }
 
+  latestCompletedAgentMessage(sessionId: string): Item | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM items
+         WHERE session_id = ?
+           AND type = 'agentmessage'
+           AND codex_method = 'item/completed'
+           AND text_excerpt IS NOT NULL
+           AND trim(text_excerpt) <> ''
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get(sessionId);
+    return row ? itemFromRow(row) : null;
+  }
+
   listTranscript(
     sessionId: string,
     options: TranscriptPageOptions = {},

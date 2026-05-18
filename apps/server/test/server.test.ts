@@ -893,6 +893,177 @@ describe("Codexhub API", () => {
     }
   });
 
+  it("repairs polluted latest projections from older stored agent deltas", async () => {
+    const dbPath = join(tempDir, "polluted-latest.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "polluted-latest-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "polluted-latest-workspace"),
+      cwd: join(tempDir, "polluted-latest-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    const completed = repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "agent_previous",
+          type: "agentMessage",
+          text: "Recovered complete answer.",
+        },
+      },
+    });
+    const delta = repo.appendItem(session.id, {
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "agent_current",
+        textDelta: "Polluted draft.",
+      },
+    });
+    repo.appendItem(session.id, {
+      method: "turn/completed",
+      params: { mode: "steer" },
+    });
+    database.db
+      .prepare(
+        `UPDATE worker_sessions
+         SET last_agent_message_item_id = ?,
+             last_agent_message = ?,
+             last_agent_message_at = ?
+         WHERE id = ?`,
+      )
+      .run(delta.id, "Polluted draft.", delta.created_at, session.id);
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const latest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest`,
+      );
+      expect(latest.last_agent_message).toBe("Recovered complete answer.");
+      expect(latest.item).toMatchObject({
+        id: completed.id,
+        type: "agentmessage",
+        codex_method: "item/completed",
+        text_excerpt: "Recovered complete answer.",
+      });
+      expect(latest.session).toMatchObject({
+        last_agent_message_item_id: completed.id,
+        last_agent_message: "Recovered complete answer.",
+      });
+
+      const latestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest?type=all`,
+      );
+      expect(latestAll.last_agent_message).toBe("Recovered complete answer.");
+      expect(latestAll.item).toMatchObject({
+        id: completed.id,
+        type: "agentmessage",
+        codex_method: "item/completed",
+        text_excerpt: "Recovered complete answer.",
+      });
+
+      const rawLatestAgent = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items/latest?type=agentmessage`,
+      );
+      expect(rawLatestAgent.item).toMatchObject({
+        id: delta.id,
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: "Polluted draft.",
+      });
+
+      const rawLatestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items/latest?type=all`,
+      );
+      expect(rawLatestAll.item).toMatchObject({
+        type: "state",
+        codex_method: "turn/completed",
+      });
+    } finally {
+      await seeded.close();
+    }
+  });
+
+  it("ignores polluted latest projections when no completed agent message exists", async () => {
+    const dbPath = join(tempDir, "polluted-latest-empty.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "polluted-latest-empty-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "polluted-latest-empty-workspace"),
+      cwd: join(tempDir, "polluted-latest-empty-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    const delta = repo.appendItem(session.id, {
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "agent_current",
+        textDelta: "Polluted draft.",
+      },
+    });
+    database.db
+      .prepare(
+        `UPDATE worker_sessions
+         SET last_agent_message_item_id = ?,
+             last_agent_message = ?,
+             last_agent_message_at = ?
+         WHERE id = ?`,
+      )
+      .run(delta.id, "Polluted draft.", delta.created_at, session.id);
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    try {
+      const latest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest`,
+      );
+      expect(latest.last_agent_message).toBeNull();
+      expect(latest.item).toBeNull();
+      expect(latest.session).toMatchObject({
+        last_agent_message_item_id: null,
+        last_agent_message: null,
+      });
+
+      const latestAll = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/latest?type=all`,
+      );
+      expect(latestAll.last_agent_message).toBeNull();
+      expect(latestAll.item).toBeNull();
+
+      const rawLatest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/items/latest?type=agentmessage`,
+      );
+      expect(rawLatest.item).toMatchObject({
+        id: delta.id,
+        type: "agentmessage",
+        codex_method: "item/agentMessage/delta",
+        text_excerpt: "Polluted draft.",
+      });
+    } finally {
+      await seeded.close();
+    }
+  });
+
   it("rejects cwd paths outside the workspace", async () => {
     const project = await post("/api/v1/projects", {
       name: "demo",

@@ -13,7 +13,10 @@ import type { WorkerSessionStatus, Workspace } from "@codexhub/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDatabase } from "../src/database.js";
 import { HubRepository } from "../src/repository.js";
-import { defaultWorkspaceSandboxPolicy } from "../src/runtime.js";
+import {
+  codexWorkerEnvironment,
+  defaultWorkspaceSandboxPolicy,
+} from "../src/runtime.js";
 import { createServer } from "../src/server.js";
 
 type App = Awaited<ReturnType<typeof createServer>>;
@@ -336,6 +339,18 @@ describe("Codexhub API", () => {
       ]),
     );
 
+    const workerEnv = codexWorkerEnvironment(workspace.workspace, {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "user.email",
+      GIT_CONFIG_VALUE_0: "existing@example.test",
+    });
+    expect(workerEnv.GIT_CONFIG_COUNT).toBe("2");
+    expect(workerEnv.GIT_CONFIG_KEY_1).toBe("safe.directory");
+    expect(workerEnv.GIT_CONFIG_VALUE_1).toBe(await realpath(worktreePath));
+    expect(
+      gitOutput(["-C", worktreePath, "status", "--short"], workerEnv),
+    ).toBe("");
+
     await writeFile(
       join(worktreePath, "worker.txt"),
       "worker change\n",
@@ -650,9 +665,10 @@ function runGit(args: string[]): void {
   gitOutput(args);
 }
 
-function gitOutput(args: string[]): string {
+function gitOutput(args: string[], env?: NodeJS.ProcessEnv): string {
   const result = spawnSync("git", args, {
     encoding: "utf8",
+    env,
     windowsHide: true,
   });
   if ((result.status ?? 1) !== 0) {

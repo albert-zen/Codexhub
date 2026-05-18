@@ -71,7 +71,7 @@ export class CodexRuntime {
     const launch = resolveCodexInvocation(codexOptions);
     const child = spawn(launch.command, launch.args, {
       cwd: workspace.cwd,
-      env: { ...process.env, ...codexOptions.env },
+      env: codexWorkerEnvironment(workspace, codexOptions.env),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -510,6 +510,31 @@ export function defaultWorkspaceSandboxPolicy(
     excludeTmpdirEnvVar: false,
     excludeSlashTmp: false,
   };
+}
+
+export function codexWorkerEnvironment(
+  workspace: Workspace,
+  overrides: Record<string, string> = {},
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...overrides };
+  appendGitConfig(env, "safe.directory", canonicalPath(workspace.path));
+  return env;
+}
+
+function appendGitConfig(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+): void {
+  const index = gitConfigCount(env);
+  env[`GIT_CONFIG_KEY_${index}`] = key;
+  env[`GIT_CONFIG_VALUE_${index}`] = value;
+  env.GIT_CONFIG_COUNT = String(index + 1);
+}
+
+function gitConfigCount(env: NodeJS.ProcessEnv): number {
+  const count = Number(env.GIT_CONFIG_COUNT);
+  return Number.isInteger(count) && count >= 0 ? count : 0;
 }
 
 function workspaceWritableRoots(workspace: Workspace): string[] {

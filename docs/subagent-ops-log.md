@@ -109,9 +109,11 @@ building Codexhub with parallel workers.
   `91038bb` warned about GitHub Actions Node 20 deprecation and
   `windows-latest` redirection; that cleanup was tracked and closed as `#17`.
 - Dogfood worker worktrees can trigger Git's safe-directory guard when the
-  worktree owner differs from the sandbox user. Agents should use per-command
-  `git -c safe.directory=<worktree>` for local status/diff reads and should not
-  change global git config inside worker sandboxes. Tracked as `#28`.
+  worktree owner differs from the sandbox user. Codexhub now injects
+  environment-scoped `safe.directory=<workspace>` Git config into worker
+  processes, so worker `git status`, `git diff`, and commit commands trust only
+  their assigned workspace without changing global Git config. Tracked as
+  `#28`.
 - Issue `#22` could edit docs and run validation, but could not commit because
   the worktree `.git` file pointed at metadata under the parent checkout outside
   the sandbox writable roots. Agents should leave validated changes intact and

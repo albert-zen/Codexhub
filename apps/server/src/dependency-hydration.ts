@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   statSync,
 } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 export interface DependencyHydrationResult {
   status: "hydrated" | "skipped";
@@ -20,6 +21,7 @@ export interface CommandResult {
   status: number;
   stdout: string;
   stderr: string;
+  error?: string;
 }
 
 export type CommandRunner = (
@@ -34,15 +36,74 @@ export interface WorktreeDependencyHydrationOptions {
   runCommand?: CommandRunner;
 }
 
+export interface WorktreeDependencyHydrationPreflightOptions {
+  sourcePath: string;
+  workspacePath?: string;
+}
+
+export interface WorktreeDependencyHydrationPlan {
+  status: "needed" | "skipped";
+  args?: string[];
+  store_dir?: string | null;
+  reason?: string;
+}
+
+export function preflightWorktreeDependencyHydration(
+  options: WorktreeDependencyHydrationPreflightOptions,
+): WorktreeDependencyHydrationPlan {
+  const sourcePath = canonicalPath(options.sourcePath);
+  const workspacePath = options.workspacePath
+    ? canonicalPath(options.workspacePath)
+    : null;
+  if (!isPnpmWorkspace(sourcePath)) {
+    return { status: "skipped", reason: "not_pnpm_workspace" };
+  }
+
+  const storeDir = validatePnpmSourceInstall(sourcePath);
+  if (workspacePath) assertSafeWorkspaceNodeModules(workspacePath);
+
+  return {
+    status: "needed",
+    args: pnpmInstallArgs(storeDir),
+    store_dir: storeDir,
+  };
+}
+
 export function hydrateWorktreeDependencies(
   options: WorktreeDependencyHydrationOptions,
 ): DependencyHydrationResult {
   const sourcePath = canonicalPath(options.sourcePath);
   const workspacePath = canonicalPath(options.workspacePath);
-  if (!isPnpmWorkspace(sourcePath)) {
-    return { status: "skipped", reason: "not_pnpm_workspace" };
+  const plan = preflightWorktreeDependencyHydration({
+    sourcePath,
+    workspacePath,
+  });
+  if (plan.status === "skipped") {
+    return plan.reason
+      ? { status: "skipped", reason: plan.reason }
+      : { status: "skipped" };
   }
 
+  const args = plan.args ?? pnpmInstallArgs(plan.store_dir ?? null);
+  mkdirSync(workspacePath, { recursive: true });
+
+  const runCommand = options.runCommand ?? runDependencyCommand;
+  const result = runCommand("pnpm", args, { cwd: workspacePath });
+  if (result.status !== 0) {
+    throw new Error(
+      `pnpm worktree dependency hydration failed (${result.status}) in ${workspacePath}: ${commandDiagnostic(result)}`,
+    );
+  }
+
+  return {
+    status: "hydrated",
+    command: "pnpm",
+    args,
+    store_dir: plan.store_dir ?? null,
+  };
+}
+
+function validatePnpmSourceInstall(sourcePath: string): string | null {
   const sourceModulesPath = join(sourcePath, "node_modules");
   if (!isDirectory(sourceModulesPath)) {
     throw new Error(
@@ -57,29 +118,19 @@ export function hydrateWorktreeDependencies(
     );
   }
 
-  mkdirSync(workspacePath, { recursive: true });
+  return storeDir;
+}
+
+function pnpmInstallArgs(storeDir: string | null): string[] {
   const args = [
     "install",
     "--offline",
     "--frozen-lockfile",
     "--ignore-scripts",
+    "--prod=false",
   ];
   if (storeDir) args.push("--store-dir", storeDir);
-
-  const runCommand = options.runCommand ?? runDependencyCommand;
-  const result = runCommand("pnpm", args, { cwd: workspacePath });
-  if (result.status !== 0) {
-    throw new Error(
-      `pnpm worktree dependency hydration failed (${result.status}) in ${workspacePath}: ${(result.stderr || result.stdout).trim()}`,
-    );
-  }
-
-  return {
-    status: "hydrated",
-    command: "pnpm",
-    args,
-    store_dir: storeDir,
-  };
+  return args;
 }
 
 function isPnpmWorkspace(path: string): boolean {
@@ -140,11 +191,39 @@ function runDependencyCommand(
     encoding: "utf8",
     windowsHide: true,
   });
-  return {
+  const commandResult: CommandResult = {
     status: result.status ?? 1,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+  if (result.error) commandResult.error = result.error.message;
+  return commandResult;
+}
+
+function assertSafeWorkspaceNodeModules(workspacePath: string): void {
+  const nodeModulesPath = join(workspacePath, "node_modules");
+  try {
+    lstatSync(nodeModulesPath);
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+
+  let resolvedNodeModules: string;
+  try {
+    resolvedNodeModules = realpathSync.native(nodeModulesPath);
+  } catch (error) {
+    throw new Error(
+      `workspace node_modules must resolve before dependency hydration: ${nodeModulesPath}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+
+  ensureContained(
+    resolvedNodeModules,
+    workspacePath,
+    `workspace node_modules resolves outside workspace before dependency hydration: ${nodeModulesPath}`,
+  );
 }
 
 function isDirectory(path: string): boolean {
@@ -161,4 +240,31 @@ function canonicalPath(path: string): string {
   } catch {
     return resolve(path);
   }
+}
+
+function ensureContained(child: string, parent: string, message: string): void {
+  const rel = relative(parent, child);
+  if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return;
+  throw new Error(`${message} -> ${child}`);
+}
+
+function commandDiagnostic(result: CommandResult): string {
+  const details = [
+    (result.stderr || result.stdout).trim(),
+    result.error ? `spawn error: ${result.error}` : "",
+  ].filter((detail) => detail.length > 0);
+  return details.length > 0 ? details.join("; ") : "no output";
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

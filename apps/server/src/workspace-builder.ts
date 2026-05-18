@@ -3,12 +3,16 @@ import {
   mkdirSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import type { Project, Workspace } from "@codexhub/core";
-import { hydrateWorktreeDependencies } from "./dependency-hydration.js";
+import {
+  hydrateWorktreeDependencies,
+  preflightWorktreeDependencyHydration,
+} from "./dependency-hydration.js";
 
 export interface WorkspaceBuildRequest {
   project: Project;
@@ -33,74 +37,110 @@ export interface BuiltWorkspace {
   last_error: string | null;
 }
 
-export function buildWorkspace(input: WorkspaceBuildRequest): BuiltWorkspace {
-  const mode = input.mode ?? null;
-  const repoUrl = clean(
-    input.repo_path ?? input.repo_url ?? input.project.default_repo_url,
-  );
-  const sourceType =
-    mode === "worktree"
-      ? "git"
-      : (input.source_type ?? (repoUrl ? "git" : "local"));
-  const branch = clean(input.branch ?? input.project.default_branch);
-  const workspacePath = resolveWorkspacePath(
-    input.project,
-    input.path,
-    repoUrl,
-  );
-  const cwd = resolveWorkspaceCwd(
-    workspacePath,
-    clean(input.cwd ?? input.project.default_cwd),
-  );
+export interface WorkspaceBuildOptions {
+  preflightDependencies?: typeof preflightWorktreeDependencyHydration;
+  hydrateDependencies?: typeof hydrateWorktreeDependencies;
+}
 
-  if (mode === "worktree") {
-    if (!repoUrl)
-      throw new Error("repo_path or repo_url is required for worktree mode");
-    prepareGitWorktree(
-      workspacePath,
-      repoUrl,
-      branch ?? defaultWorktreeBranch(workspacePath),
+interface CreatedWorktree {
+  repoPath: string;
+  path: string;
+  branch: string;
+}
+
+export function buildWorkspace(
+  input: WorkspaceBuildRequest,
+  options: WorkspaceBuildOptions = {},
+): BuiltWorkspace {
+  let createdWorktree: CreatedWorktree | null = null;
+  try {
+    const mode = input.mode ?? null;
+    const repoUrl = clean(
+      input.repo_path ?? input.repo_url ?? input.project.default_repo_url,
     );
-    hydrateWorktreeDependencies({
-      sourcePath: repoUrl,
+    const sourceType =
+      mode === "worktree"
+        ? "git"
+        : (input.source_type ?? (repoUrl ? "git" : "local"));
+    const branch = clean(input.branch ?? input.project.default_branch);
+    const workspacePath = resolveWorkspacePath(
+      input.project,
+      input.path,
+      repoUrl,
+    );
+    const cwd = resolveWorkspaceCwd(
       workspacePath,
-    });
-  } else if (sourceType === "git") {
-    if (!repoUrl) throw new Error("repo_url is required for git workspaces");
-    prepareGitWorkspace(workspacePath, repoUrl, branch);
-  } else {
-    mkdirSync(workspacePath, { recursive: true });
+      clean(input.cwd ?? input.project.default_cwd),
+    );
+
+    if (mode === "worktree") {
+      if (!repoUrl)
+        throw new Error("repo_path or repo_url is required for worktree mode");
+      const worktreeBranch = branch ?? defaultWorktreeBranch(workspacePath);
+      const preflightDependencies =
+        options.preflightDependencies ?? preflightWorktreeDependencyHydration;
+      preflightDependencies({ sourcePath: repoUrl });
+      prepareGitWorktree(workspacePath, repoUrl, worktreeBranch);
+      createdWorktree = {
+        repoPath: repoUrl,
+        path: workspacePath,
+        branch: worktreeBranch,
+      };
+      const hydrateDependencies =
+        options.hydrateDependencies ?? hydrateWorktreeDependencies;
+      hydrateDependencies({
+        sourcePath: repoUrl,
+        workspacePath,
+      });
+    } else if (sourceType === "git") {
+      if (!repoUrl) throw new Error("repo_url is required for git workspaces");
+      prepareGitWorkspace(workspacePath, repoUrl, branch);
+    } else {
+      mkdirSync(workspacePath, { recursive: true });
+    }
+
+    const canonicalWorkspace = canonicalPath(workspacePath);
+    const canonicalCwd = canonicalPath(cwd);
+    ensureContained(
+      canonicalCwd,
+      canonicalWorkspace,
+      "cwd must stay inside workspace path",
+    );
+
+    const commitSha =
+      clean(input.commit_sha) ??
+      gitOutput(canonicalWorkspace, ["rev-parse", "HEAD"]);
+    const currentBranch =
+      branch ??
+      gitOutput(canonicalWorkspace, ["rev-parse", "--abbrev-ref", "HEAD"]);
+
+    if (input.commit_sha && sourceType === "git") {
+      runGit(canonicalWorkspace, ["checkout", input.commit_sha]);
+    }
+
+    return {
+      source_type: sourceType,
+      repo_url:
+        mode === "worktree" && repoUrl ? canonicalPath(repoUrl) : repoUrl,
+      path: canonicalWorkspace,
+      cwd: canonicalCwd,
+      branch: currentBranch === "HEAD" ? branch : currentBranch,
+      commit_sha: commitSha,
+      status: "ready",
+      last_error: null,
+    };
+  } catch (error) {
+    if (createdWorktree) {
+      const cleanupErrors = cleanupCreatedGitWorktree(createdWorktree);
+      if (cleanupErrors.length > 0) {
+        throw new Error(
+          `${errorMessage(error)}; failed to clean up created worktree: ${cleanupErrors.join("; ")}`,
+          { cause: error },
+        );
+      }
+    }
+    throw error;
   }
-
-  const canonicalWorkspace = canonicalPath(workspacePath);
-  const canonicalCwd = canonicalPath(cwd);
-  ensureContained(
-    canonicalCwd,
-    canonicalWorkspace,
-    "cwd must stay inside workspace path",
-  );
-
-  const commitSha =
-    clean(input.commit_sha) ??
-    gitOutput(canonicalWorkspace, ["rev-parse", "HEAD"]);
-  const currentBranch =
-    branch ??
-    gitOutput(canonicalWorkspace, ["rev-parse", "--abbrev-ref", "HEAD"]);
-
-  if (input.commit_sha && sourceType === "git") {
-    runGit(canonicalWorkspace, ["checkout", input.commit_sha]);
-  }
-
-  return {
-    source_type: sourceType,
-    repo_url: mode === "worktree" && repoUrl ? canonicalPath(repoUrl) : repoUrl,
-    path: canonicalWorkspace,
-    cwd: canonicalCwd,
-    branch: currentBranch === "HEAD" ? branch : currentBranch,
-    commit_sha: commitSha,
-    status: "ready",
-    last_error: null,
-  };
 }
 
 function resolveWorkspacePath(
@@ -226,20 +266,80 @@ function runCommand(
   command: string,
   args: string[],
   options: { throwOnFailure?: boolean } = {},
-): { status: number; stdout: string; stderr: string } {
+): { status: number; stdout: string; stderr: string; error?: string } {
   const result = spawnSync(command, args, {
     encoding: "utf8",
     windowsHide: true,
   });
-  const status = result.status ?? 1;
-  const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
-  if (options.throwOnFailure !== false && status !== 0) {
-    throw new Error(
-      `${command} ${args.join(" ")} failed (${status}): ${(stderr || stdout).trim()}`,
+  const commandResult: {
+    status: number;
+    stdout: string;
+    stderr: string;
+    error?: string;
+  } = {
+    status: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+  if (result.error) commandResult.error = result.error.message;
+  if (options.throwOnFailure !== false && commandResult.status !== 0) {
+    throw new Error(commandFailure(command, args, commandResult));
+  }
+  return commandResult;
+}
+
+function cleanupCreatedGitWorktree(worktree: CreatedWorktree): string[] {
+  const cleanupErrors: string[] = [];
+  const canonicalRepo = canonicalPath(worktree.repoPath);
+
+  const remove = runCommand(
+    "git",
+    ["-C", canonicalRepo, "worktree", "remove", "--force", worktree.path],
+    { throwOnFailure: false },
+  );
+  if (remove.status !== 0) {
+    cleanupErrors.push(
+      commandFailure(
+        "git",
+        ["-C", canonicalRepo, "worktree", "remove", "--force", worktree.path],
+        remove,
+      ),
+    );
+    try {
+      rejectRootPath(worktree.path);
+      rmSync(worktree.path, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(
+        `removing ${worktree.path} failed: ${errorMessage(error)}`,
+      );
+    }
+  }
+
+  const prune = runCommand("git", ["-C", canonicalRepo, "worktree", "prune"], {
+    throwOnFailure: false,
+  });
+  if (prune.status !== 0) {
+    cleanupErrors.push(
+      commandFailure("git", ["-C", canonicalRepo, "worktree", "prune"], prune),
     );
   }
-  return { status, stdout, stderr };
+
+  const deleteBranch = runCommand(
+    "git",
+    ["-C", canonicalRepo, "branch", "-D", worktree.branch],
+    { throwOnFailure: false },
+  );
+  if (deleteBranch.status !== 0) {
+    cleanupErrors.push(
+      commandFailure(
+        "git",
+        ["-C", canonicalRepo, "branch", "-D", worktree.branch],
+        deleteBranch,
+      ),
+    );
+  }
+
+  return cleanupErrors;
 }
 
 function canonicalPath(path: string): string {
@@ -287,4 +387,28 @@ function safeName(value: string): string {
 
 function defaultWorktreeBranch(path: string): string {
   return `codexhub/${safeName(path)}-${Date.now()}`;
+}
+
+function commandFailure(
+  command: string,
+  args: string[],
+  result: { status: number; stdout: string; stderr: string; error?: string },
+): string {
+  return `${command} ${args.join(" ")} failed (${result.status}): ${commandDiagnostic(result)}`;
+}
+
+function commandDiagnostic(result: {
+  stdout: string;
+  stderr: string;
+  error?: string;
+}): string {
+  const details = [
+    (result.stderr || result.stdout).trim(),
+    result.error ? `spawn error: ${result.error}` : "",
+  ].filter((detail) => detail.length > 0);
+  return details.length > 0 ? details.join("; ") : "no output";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

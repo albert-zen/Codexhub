@@ -133,12 +133,16 @@ worktree worker to commit.
 For pnpm workspaces, run `pnpm install` in the source checkout before creating
 worktree workers. When Codexhub sees `pnpm-lock.yaml` in the source checkout, it
 hydrates each created worktree with `pnpm install --offline --frozen-lockfile
---ignore-scripts`, using the source install's recorded pnpm store when present.
-This creates ignored `node_modules/` entries in the worktree so validation can
-resolve workspace dependencies without network access. If the source checkout is
-not installed or its store is missing, workspace creation should stop with that
-blocker instead of asking workers to debug missing `@types/node`, `vitest`, or
-workspace package links. If pnpm reports a store permission error, rerun
+--ignore-scripts --prod=false`, using the source install's recorded pnpm store
+when present. This creates ignored `node_modules/` entries in the worktree so
+validation can resolve workspace dependencies without network access. If the
+source checkout is not installed or its store is missing, workspace creation
+should stop before creating the worktree where possible, with that blocker
+instead of asking workers to debug missing `@types/node`, `vitest`, or workspace
+package links. If hydration fails after Git creates the worktree, Codexhub
+removes that worktree and prunes Git worktree metadata before returning the
+failure. Existing worker `node_modules` links must resolve inside the worker
+workspace before pnpm runs. If pnpm reports a store permission error, rerun
 Codexhub where it can write to the source install's recorded store or reinstall
 the source checkout with a writable store.
 

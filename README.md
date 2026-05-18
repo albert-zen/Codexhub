@@ -106,15 +106,20 @@ pnpm install
 ```
 
 When the source checkout has `pnpm-lock.yaml`, Codexhub hydrates each created
-worktree by running `pnpm install --offline --frozen-lockfile --ignore-scripts`
-inside the worktree. If the source install records a pnpm store path, Codexhub
-uses that store explicitly so validation can resolve `@types/node`, `vitest`,
+worktree by running
+`pnpm install --offline --frozen-lockfile --ignore-scripts --prod=false` inside
+the worktree. If the source install records a pnpm store path, Codexhub uses
+that store explicitly so validation can resolve `@types/node`, `vitest`,
 workspace package links, and other dependencies without network access. The
 resulting `node_modules/` and any local `.pnpm-store/` are ignored by default.
 If the source checkout is missing `node_modules/` or its recorded store, workspace
-creation fails with a blocker that tells the operator to rerun `pnpm install` in
-the source checkout. If pnpm reports a store permission error, run Codexhub from
-an environment that can write to the source install's recorded pnpm store or
+creation fails before adding the worktree where possible, with a blocker that
+tells the operator to rerun `pnpm install` in the source checkout. If hydration
+fails after Git creates the worktree, Codexhub removes the worktree and prunes
+Git worktree metadata before returning the failure. Codexhub also refuses to run
+pnpm when an existing worker `node_modules` link resolves outside the worker
+workspace. If pnpm reports a store permission error, run Codexhub from an
+environment that can write to the source install's recorded pnpm store or
 rehydrate the source checkout with a writable store.
 
 Review status is explicit observability metadata for manager agents and humans.

@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +66,7 @@ describe("worktree dependency hydration", () => {
           "--offline",
           "--frozen-lockfile",
           "--ignore-scripts",
+          "--prod=false",
           "--store-dir",
           await realpath(storePath),
         ],
@@ -80,6 +88,57 @@ describe("worktree dependency hydration", () => {
     expect(() =>
       hydrateWorktreeDependencies({ sourcePath, workspacePath }),
     ).toThrow(/run "pnpm install" in the source checkout/);
+  });
+
+  it("rejects workspace node_modules links that resolve outside the worker", async () => {
+    const sourcePath = join(tempDir, "source repo");
+    const workspacePath = join(tempDir, "worker repo");
+    const outsideModules = join(tempDir, "outside modules");
+    await mkdir(join(sourcePath, "node_modules"), { recursive: true });
+    await mkdir(workspacePath, { recursive: true });
+    await mkdir(outsideModules, { recursive: true });
+    await writeFile(
+      join(sourcePath, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n",
+    );
+    await symlink(
+      outsideModules,
+      join(workspacePath, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const calls: string[] = [];
+    const runCommand: CommandRunner = (command) => {
+      calls.push(command);
+      return { status: 0, stdout: "", stderr: "" };
+    };
+
+    expect(() =>
+      hydrateWorktreeDependencies({ sourcePath, workspacePath, runCommand }),
+    ).toThrow(/node_modules resolves outside workspace/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("includes spawn errors in failed install diagnostics", async () => {
+    const sourcePath = join(tempDir, "source repo");
+    const workspacePath = join(tempDir, "worker repo");
+    await mkdir(join(sourcePath, "node_modules"), { recursive: true });
+    await mkdir(workspacePath, { recursive: true });
+    await writeFile(
+      join(sourcePath, "pnpm-lock.yaml"),
+      "lockfileVersion: '9.0'\n",
+    );
+
+    const runCommand: CommandRunner = () => ({
+      status: 1,
+      stdout: "",
+      stderr: "",
+      error: "spawn pnpm ENOENT",
+    });
+
+    expect(() =>
+      hydrateWorktreeDependencies({ sourcePath, workspacePath, runCommand }),
+    ).toThrow(/spawn error: spawn pnpm ENOENT/);
   });
 
   it("skips non-pnpm worktrees", async () => {

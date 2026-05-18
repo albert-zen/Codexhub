@@ -140,6 +140,11 @@ building Codexhub with parallel workers.
   install's recorded store. `node_modules/` and `.pnpm-store/` are ignored so
   generated dependency artifacts stay out of source diffs; missing source
   dependencies or store paths are documented blockers.
+- Follow-up review on `#36` tightened failure safety: source dependency blockers
+  are preflighted before `git worktree add` where possible, failed hydration
+  removes the created worktree and prunes Git worktree metadata, pnpm hydration
+  forces dev dependencies with `--prod=false`, and worker `node_modules` links
+  must not resolve outside the worker workspace.
 - Review agents should stop after identifying a known environment blocker and
   complete a static review from the diff. Without explicit steer, reviewers may
   retry Vitest/TypeScript variants even after `spawn EPERM` or missing

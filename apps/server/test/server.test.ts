@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { WorkerSessionStatus, Workspace } from "@codexhub/core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openDatabase } from "../src/database.js";
 import { HubRepository } from "../src/repository.js";
 import {
@@ -237,6 +237,12 @@ describe("Codexhub API", () => {
         },
       },
     });
+    repo.appendItem(session.id, {
+      method: "turn/completed",
+      params: {
+        message: "done",
+      },
+    });
     database.close();
 
     const seeded = await createServer({ dbPath, logger: false });
@@ -263,7 +269,7 @@ describe("Codexhub API", () => {
       );
       expect(
         secondPage.transcript.map((entry: { kind: string }) => entry.kind),
-      ).toEqual(["tool"]);
+      ).toEqual(["tool", "debug"]);
 
       const latest = await getFrom(
         seeded,
@@ -271,7 +277,7 @@ describe("Codexhub API", () => {
       );
       expect(
         latest.transcript.map((entry: { kind: string }) => entry.kind),
-      ).toEqual(["agent_message", "tool"]);
+      ).toEqual(["tool", "debug"]);
       expect(latest.next_cursor).toBeNull();
 
       const rawItems = await getFrom(
@@ -282,6 +288,92 @@ describe("Codexhub API", () => {
       expect(rawItems.next_cursor).toBe("20");
       expect(rawItems.items[0].raw_payload.params.textDelta).toBe("part-1 ");
     } finally {
+      await seeded.close();
+    }
+  }, 15_000);
+
+  it("bounds recent transcript projection to the requested tail window", async () => {
+    const dbPath = join(tempDir, "large-recent-transcript.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "large-transcript-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "large-transcript-workspace"),
+      cwd: join(tempDir, "large-transcript-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    for (let index = 0; index < 180; index += 1) {
+      repo.appendItem(session.id, {
+        method: "item/tool/call",
+        params: {
+          item: {
+            id: `old_tool_${index}`,
+            type: "mcpToolCall",
+            text: `old tool ${index}`,
+          },
+        },
+      });
+    }
+    repo.appendItem(session.id, {
+      method: "item/agentMessage/delta",
+      params: {
+        itemId: "agent_recent",
+        textDelta: "partial ",
+      },
+    });
+    repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "agent_recent",
+          type: "agentMessage",
+          text: "recent complete",
+        },
+      },
+    });
+    repo.appendItem(session.id, {
+      method: "item/completed",
+      params: {
+        item: {
+          id: "tool_recent",
+          type: "mcpToolCall",
+          text: "tool complete",
+        },
+      },
+    });
+    database.close();
+
+    const seeded = await createServer({ dbPath, logger: false });
+    const parseSpy = vi.spyOn(JSON, "parse");
+    try {
+      const latest = await getFrom(
+        seeded,
+        `/api/v1/sessions/${session.id}/transcript?limit=2&recent=true`,
+      );
+
+      expect(
+        latest.transcript.map((entry: { kind: string }) => entry.kind),
+      ).toEqual(["agent_message", "tool"]);
+      expect(latest.transcript[0]).toMatchObject({
+        sequence: 181,
+        text: "recent complete",
+        item_sequences: [181, 182],
+      });
+      expect(latest.transcript[1]).toMatchObject({
+        sequence: 182,
+        text: "tool complete",
+        item_sequences: [183],
+      });
+      expect(latest.next_cursor).toBeNull();
+      expect(parseSpy.mock.calls.length).toBeLessThan(20);
+    } finally {
+      parseSpy.mockRestore();
       await seeded.close();
     }
   }, 15_000);

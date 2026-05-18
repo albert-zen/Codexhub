@@ -14,6 +14,7 @@ import {
   type TranscriptPageOptions,
   type WorkerSession,
   type Workspace,
+  buildTranscriptEntries,
   projectTranscriptEntries,
 } from "@codexhub/core";
 
@@ -90,6 +91,16 @@ export interface SessionListOptions {
   status?: WorkerSession["status"] | null;
   limit?: number;
   cursor?: string | null;
+}
+
+type TranscriptUnitSource = "message" | "agent" | "item";
+
+interface RecentTranscriptUnit {
+  unit_source: TranscriptUnitSource;
+  entry_id: string;
+  codex_item_id: string | null;
+  source_id: string | null;
+  transcript_sequence: number;
 }
 
 export class HubRepository {
@@ -781,12 +792,195 @@ export class HubRepository {
     limit: number;
   } {
     this.requireSession(sessionId);
+    const limit = clampLimit(options.limit, 20, 100);
+    const after = options.after ?? 0;
+    const before = options.before;
+    if (options.recent && after === 0 && before === undefined) {
+      return this.listRecentTranscript(sessionId, limit);
+    }
+
     const messages = this.listMessages(sessionId);
     const items = this.db
       .prepare("SELECT * FROM items WHERE session_id = ? ORDER BY sequence ASC")
       .all(sessionId)
       .map(itemFromRow);
     return projectTranscriptEntries(sessionId, messages, items, options);
+  }
+
+  private listRecentTranscript(
+    sessionId: string,
+    limit: number,
+  ): {
+    items: TranscriptEntry[];
+    next_cursor: string | null;
+    limit: number;
+  } {
+    const units = this.db
+      .prepare(
+        `WITH transcript_units AS (
+          SELECT
+            'message' AS unit_source,
+            'message:' || id AS entry_id,
+            NULL AS codex_item_id,
+            id AS source_id,
+            COALESCE(sent_at, created_at) AS sort_time,
+            0 AS sort_source_rank,
+            0 AS sort_sequence,
+            id AS tie_id
+          FROM messages
+          WHERE session_id = ? AND status = 'sent'
+
+          UNION ALL
+
+          SELECT
+            'agent' AS unit_source,
+            'agent:' || group_id AS entry_id,
+            codex_item_id,
+            source_id,
+            MIN(created_at) AS sort_time,
+            1 AS sort_source_rank,
+            MIN(sequence) AS sort_sequence,
+            'agent:' || group_id AS tie_id
+          FROM (
+            SELECT
+              CASE WHEN codex_item_id IS NOT NULL THEN codex_item_id ELSE id END AS group_id,
+              codex_item_id,
+              CASE WHEN codex_item_id IS NULL THEN id ELSE NULL END AS source_id,
+              created_at,
+              sequence
+            FROM items
+            WHERE session_id = ? AND type = 'agentmessage'
+          )
+          GROUP BY group_id, codex_item_id, source_id
+
+          UNION ALL
+
+          SELECT
+            'item' AS unit_source,
+            'item:' || id AS entry_id,
+            NULL AS codex_item_id,
+            id AS source_id,
+            created_at AS sort_time,
+            1 AS sort_source_rank,
+            sequence AS sort_sequence,
+            id AS tie_id
+          FROM items
+          WHERE session_id = ? AND type <> 'agentmessage'
+        ),
+        numbered AS (
+          SELECT
+            unit_source,
+            entry_id,
+            codex_item_id,
+            source_id,
+            row_number() OVER (
+              ORDER BY sort_time ASC, sort_source_rank ASC, sort_sequence ASC, tie_id ASC
+            ) AS transcript_sequence
+          FROM transcript_units
+        )
+        SELECT *
+        FROM numbered
+        ORDER BY transcript_sequence DESC
+        LIMIT ?`,
+      )
+      .all(sessionId, sessionId, sessionId, limit)
+      .map(recentTranscriptUnitFromRow)
+      .sort(
+        (left, right) => left.transcript_sequence - right.transcript_sequence,
+      );
+
+    if (units.length === 0) {
+      return { items: [], limit, next_cursor: null };
+    }
+
+    const sequenceByEntryId = new Map(
+      units.map((unit) => [unit.entry_id, unit.transcript_sequence]),
+    );
+    const messages = this.messagesForTranscriptUnits(sessionId, units);
+    const items = this.itemsForTranscriptUnits(sessionId, units);
+    const entries = buildTranscriptEntries(sessionId, messages, items)
+      .map((entry) => {
+        const sequence = sequenceByEntryId.get(entry.id);
+        if (sequence === undefined) {
+          throw new Error(`missing transcript sequence for ${entry.id}`);
+        }
+        return { ...entry, sequence };
+      })
+      .sort((left, right) => left.sequence - right.sequence);
+
+    return {
+      items: entries,
+      limit,
+      next_cursor: null,
+    };
+  }
+
+  private messagesForTranscriptUnits(
+    sessionId: string,
+    units: RecentTranscriptUnit[],
+  ): import("@codexhub/core").Message[] {
+    const messageIds = unique(
+      units
+        .filter((unit) => unit.unit_source === "message")
+        .map((unit) => requiredUnitSourceId(unit)),
+    );
+    if (messageIds.length === 0) return [];
+
+    return this.db
+      .prepare(
+        `SELECT * FROM messages
+         WHERE session_id = ? AND id IN (${placeholders(messageIds)})
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(sessionId, ...messageIds)
+      .map(messageFromRow);
+  }
+
+  private itemsForTranscriptUnits(
+    sessionId: string,
+    units: RecentTranscriptUnit[],
+  ): Item[] {
+    const itemIds = unique(
+      units
+        .filter(
+          (unit) =>
+            unit.unit_source === "item" ||
+            (unit.unit_source === "agent" && unit.codex_item_id === null),
+        )
+        .map((unit) => requiredUnitSourceId(unit)),
+    );
+    const agentCodexItemIds = unique(
+      units
+        .filter(
+          (unit) => unit.unit_source === "agent" && unit.codex_item_id !== null,
+        )
+        .map((unit) => unit.codex_item_id ?? ""),
+    );
+    const where: string[] = [];
+    const values: string[] = [sessionId];
+
+    if (itemIds.length > 0) {
+      where.push(`id IN (${placeholders(itemIds)})`);
+      values.push(...itemIds);
+    }
+    if (agentCodexItemIds.length > 0) {
+      where.push(
+        `type = 'agentmessage' AND codex_item_id IN (${placeholders(
+          agentCodexItemIds,
+        )})`,
+      );
+      values.push(...agentCodexItemIds);
+    }
+    if (where.length === 0) return [];
+
+    return this.db
+      .prepare(
+        `SELECT * FROM items
+         WHERE session_id = ? AND (${where.join(" OR ")})
+         ORDER BY sequence ASC`,
+      )
+      .all(...values)
+      .map(itemFromRow);
   }
 
   private agentMessageProjection(item: Item): {
@@ -909,6 +1103,21 @@ function parseCursor(value: string | null | undefined): number {
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function placeholders(values: unknown[]): string {
+  return values.map(() => "?").join(", ");
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
+}
+
+function requiredUnitSourceId(unit: RecentTranscriptUnit): string {
+  if (unit.source_id === null) {
+    throw new Error(`missing source id for transcript unit ${unit.entry_id}`);
+  }
+  return unit.source_id;
+}
+
 function projectFromRow(row: unknown): Project {
   const record = asRow(row);
   return {
@@ -1029,6 +1238,26 @@ function messageFromRow(row: unknown): import("@codexhub/core").Message {
     error: string(record, "error"),
     created_at: requiredString(record, "created_at"),
     sent_at: string(record, "sent_at"),
+  };
+}
+
+function recentTranscriptUnitFromRow(row: unknown): RecentTranscriptUnit {
+  const record = asRow(row);
+  const unitSource = requiredString(record, "unit_source");
+  if (
+    unitSource !== "message" &&
+    unitSource !== "agent" &&
+    unitSource !== "item"
+  ) {
+    throw new Error(`invalid transcript unit source: ${unitSource}`);
+  }
+
+  return {
+    unit_source: unitSource,
+    entry_id: requiredString(record, "entry_id"),
+    codex_item_id: string(record, "codex_item_id"),
+    source_id: string(record, "source_id"),
+    transcript_sequence: number(record, "transcript_sequence"),
   };
 }
 

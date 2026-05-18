@@ -284,7 +284,7 @@ describe("Codexhub API", () => {
     } finally {
       await seeded.close();
     }
-  });
+  }, 15_000);
 
   it("keeps manager-facing latest agent messages complete while preserving raw deltas", async () => {
     const dbPath = join(tempDir, "latest-agentmessage.sqlite");

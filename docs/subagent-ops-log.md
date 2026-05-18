@@ -127,6 +127,21 @@ building Codexhub with parallel workers.
   immediately while the dogfood findings are fresh. This keeps the manager's
   next planning session focused on current bottlenecks rather than stale seed
   work.
+- In the `#28` / `#32` / `#34` parallel dogfood batch, workers could now commit
+  from linked worktrees, but validation remained noisy because each worktree did
+  not have predictable dependency hydration. Several workers hit missing
+  `node_modules`, missing `@types/node` or `vitest`, and one created an
+  untracked `.pnpm-store/` that polluted `pnpm format` until staged files were
+  selected explicitly. Track dependency/cache setup for worker worktrees as
+  `#36`.
+- Review agents should stop after identifying a known environment blocker and
+  complete a static review from the diff. Without explicit steer, reviewers may
+  retry Vitest/TypeScript variants even after `spawn EPERM` or missing
+  dependency causes are already recorded.
+- Main-integrator validation remains necessary after worker handoff. The same
+  batch passed static review, but the main checkout caught a real CLI help test
+  fragility caused by line wrapping. That was fixed before push, after
+  `pnpm check`, server tests, CLI tests, and `pnpm format` passed.
 
 ## Suggested Ownership Map
 

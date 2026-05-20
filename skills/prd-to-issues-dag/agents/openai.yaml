@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRD To Issues DAG"
+  short_description: "Create issue slices and an execution DAG."
+  default_prompt: "Break this PRD into AFK-ready issue slices with dependencies."

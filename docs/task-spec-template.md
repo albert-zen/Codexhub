@@ -33,6 +33,13 @@ behavior.
 - Concrete pass/fail requirement.
 - Concrete pass/fail requirement.
 
+## Feedback Loop
+
+- TDD tracer bullet, diagnosis reproduction loop, browser check, or other
+  explicit feedback loop.
+- Public interface or behavior surface to test.
+- Regression case if this is a bug fix.
+
 ## Validation
 
 - Exact command or check.

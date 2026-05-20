@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diagnose"
+  short_description: "Debug with reproducible feedback loops."
+  default_prompt: "Diagnose this bug by building a feedback loop first."

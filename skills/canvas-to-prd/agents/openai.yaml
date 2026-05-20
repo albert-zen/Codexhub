@@ -1,0 +1,4 @@
+interface:
+  display_name: "Canvas To PRD"
+  short_description: "Turn a canvas into a PRD/spec."
+  default_prompt: "Create a PRD from this architecture canvas and conversation."

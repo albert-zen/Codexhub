@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Loop"
+  short_description: "Orchestrate standards and spec review."
+  default_prompt: "Run review-loop for this implementation using clean reviewer subagents."

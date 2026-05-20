@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup Canvas Agent Skills"
+  short_description: "Bootstrap repo rules for agent workflow."
+  default_prompt: "Set up this repo for Canvas-driven agent workflow."

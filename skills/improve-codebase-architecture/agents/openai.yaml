@@ -1,0 +1,4 @@
+interface:
+  display_name: "Improve Codebase Architecture"
+  short_description: "Find deep-module architecture improvements."
+  default_prompt: "Find architecture improvements that make this codebase deeper and more testable."

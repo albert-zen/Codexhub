@@ -1,0 +1,4 @@
+interface:
+  display_name: "AFK Implementation Manager"
+  short_description: "Manage AFK implementation from a DAG."
+  default_prompt: "Execute this issue DAG as a manager, using TDD and preserving evidence."

@@ -17,6 +17,9 @@ rediscover them from chat history.
   review-loop lessons, and follow-up operational issues.
 - `docs/github-issues.md`: local backlog synthesis and issue drafts. GitHub
   issues are the active execution source of truth.
+- `docs/agents/`: Canvas-driven agent workflow setup. These files map the
+  workflow to existing repo sources of truth for issue tracking, artifact paths,
+  quality gates, worker model, and review policy.
 - `docs/task-spec-template.md`: task spec format for worker-sized tasks.
 - `docs/review-gate.md`: read-only review subagent workflow and checklist.
 - `docs/runtime-supervisor.md`: restart behavior, unavailable-process fallback,
@@ -24,6 +27,7 @@ rediscover them from chat history.
 - `.github/ISSUE_TEMPLATE/task_spec.yml`: GitHub issue form for task specs.
 - `.github/pull_request_template.md`: PR checklist for task specs, validation,
   and review gate completion.
+- `skills/SKILLSET.md`: index for repo-local Canvas-driven workflow skills.
 - `skills/codexhub/SKILL.md`: repo-local skill for agents using Codexhub as a
   worker control plane from other projects or tasks.
 
@@ -36,6 +40,8 @@ rediscover them from chat history.
 - Keep docs concise and operational. Prefer checklists and concrete examples.
 - Avoid duplicating full rules in multiple docs. Link or point to the source of
   truth when a short reminder is enough.
+- `docs/agents/` should point to existing owners when they exist rather than
+  becoming a second copy of quality gates, review rules, or worker prompts.
 - Treat stale docs as a bug. Fix directly when in scope, or create a follow-up
   issue.
 - Record durable lessons where appropriate as concrete observations with
@@ -50,8 +56,12 @@ After each worker task, check and report:
 - Did the setup or usage surface change? Update `README.md`.
 - Did repo-local agent workflow, architecture, or quality rules change? Update
   `AGENTS.md`.
+- Did Canvas-driven workflow setup change? Update `docs/agents/` and any
+  source-of-truth document it points to.
 - Did Codexhub usage, delegation, or large-scale worker-control guidance change?
   Update `skills/codexhub/SKILL.md`.
+- Did repo-local Canvas workflow skill guidance change? Update
+  `skills/SKILLSET.md` and the affected skill folder.
 - Did product phase, baseline, or open work change? Update `docs/roadmap.md`.
 - Did worker process ownership, restart behavior, or missing-process fallback
   change? Update `docs/runtime-supervisor.md`.

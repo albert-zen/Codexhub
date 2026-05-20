@@ -1,0 +1,4 @@
+interface:
+  display_name: "TDD"
+  short_description: "Develop with red-green-refactor TDD."
+  default_prompt: "Use TDD to implement this change one behavior slice at a time."

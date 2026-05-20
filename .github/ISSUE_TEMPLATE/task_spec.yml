@@ -49,6 +49,15 @@ body:
     validations:
       required: true
   - type: textarea
+    id: feedback_loop
+    attributes:
+      label: Feedback Loop
+      description: TDD tracer bullet, diagnosis reproduction loop, browser check, or other feedback loop expected before broad implementation.
+      placeholder: |
+        - ...
+    validations:
+      required: true
+  - type: textarea
     id: validation
     attributes:
       label: Validation

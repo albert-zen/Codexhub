@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architecture Canvas"
+  short_description: "Build Markdown and HTML architecture canvas."
+  default_prompt: "Map this system into Markdown and HTML architecture canvas artifacts."

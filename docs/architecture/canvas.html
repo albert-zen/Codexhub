@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codexhub Architecture Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "neutral",
+        securityLevel: "loose",
+      });
+    </script>
+    <style>
+      .mass-grid {
+        display: grid;
+        grid-template-columns: 96px 1fr 1fr;
+        gap: 8px;
+        align-items: end;
+      }
+      .surface {
+        background: #fef3c7;
+        border: 1px solid #f59e0b;
+      }
+      .implementation {
+        background: #e0f2fe;
+        border: 1px solid #0284c7;
+      }
+      .deep-module {
+        background: linear-gradient(135deg, #0f172a, #1e293b);
+        color: white;
+      }
+      .leak-arrow {
+        color: #dc2626;
+        font-weight: 700;
+      }
+      .faded {
+        opacity: 0.44;
+      }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900">
+    <main class="mx-auto max-w-6xl space-y-10 px-6 py-10">
+      <header class="space-y-5">
+        <div class="space-y-2">
+          <p
+            class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+          >
+            Codexhub - architecture canvas - 2026-05-21
+          </p>
+          <h1 class="text-4xl font-semibold tracking-normal text-slate-950">
+            Deepening candidates for Codexhub
+          </h1>
+        </div>
+        <div
+          class="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700 md:grid-cols-4"
+        >
+          <div>
+            <strong>Module</strong>: box with an interface and implementation.
+          </div>
+          <div>
+            <strong>Seam</strong>: dashed or named edge where behaviour changes.
+          </div>
+          <div>
+            <strong>Leakage</strong>: red arrow where callers know internals.
+          </div>
+          <div>
+            <strong>Deep</strong>: small interface, large hidden implementation.
+          </div>
+        </div>
+      </header>
+
+      <section class="rounded-lg border border-emerald-200 bg-emerald-50 p-5">
+        <h2 class="text-lg font-semibold text-emerald-950">Current read</h2>
+        <p class="mt-2 max-w-4xl text-sm leading-6 text-emerald-950">
+          The core domain language is relatively crisp: projects, workspaces,
+          worker sessions, run groups, review findings, items, and transcripts.
+          The clearest shallow pressure is not in pure core logic. It is in the
+          modules that make every caller know persistence, HTTP, CLI formatting,
+          and worker-observation details at the same time.
+        </p>
+      </section>
+
+      <section id="candidates" class="space-y-10">
+        <article
+          id="session-store"
+          class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="mr-auto text-2xl font-semibold">
+              Deepen the worker session store
+            </h2>
+            <span
+              class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
+              >Strong</span
+            >
+            <span
+              class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              >local-substitutable</span
+            >
+          </div>
+
+          <div class="mt-4 grid gap-6 lg:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                Before
+              </h3>
+              <div class="mt-4 mass-grid text-xs">
+                <div class="font-mono text-slate-500">interface</div>
+                <div class="surface rounded p-2 text-center">projects</div>
+                <div class="surface rounded p-2 text-center">run groups</div>
+                <div></div>
+                <div class="surface rounded p-2 text-center">sessions</div>
+                <div class="surface rounded p-2 text-center">workspaces</div>
+                <div></div>
+                <div class="surface rounded p-2 text-center">review gate</div>
+                <div class="surface rounded p-2 text-center">findings</div>
+                <div></div>
+                <div class="surface rounded p-2 text-center">items</div>
+                <div class="surface rounded p-2 text-center">transcript</div>
+                <div class="font-mono text-slate-500">implementation</div>
+                <div
+                  class="implementation col-span-2 h-32 rounded p-3 text-center"
+                >
+                  one HubRepository: SQL, row mappers, session resolution,
+                  review state, recent transcript SQL
+                </div>
+              </div>
+              <p class="mt-4 text-sm text-slate-600">
+                The interface surface is wide enough that many callers must know
+                which persistence concepts belong together.
+              </p>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                After
+              </h3>
+              <div class="mt-4 space-y-3">
+                <div
+                  class="deep-module rounded-lg p-5 text-center text-sm font-semibold"
+                >
+                  Worker session store
+                  <div
+                    class="mt-3 grid gap-2 text-xs font-normal md:grid-cols-3"
+                  >
+                    <div class="rounded bg-white/10 p-2">lifecycle</div>
+                    <div class="rounded bg-white/10 p-2">review state</div>
+                    <div class="rounded bg-white/10 p-2">item stream</div>
+                    <div class="rounded bg-white/10 p-2">
+                      transcript projection
+                    </div>
+                    <div class="rounded bg-white/10 p-2">session lookup</div>
+                    <div class="rounded bg-white/10 p-2">row mapping</div>
+                  </div>
+                </div>
+                <div
+                  class="rounded border border-dashed border-slate-400 p-3 text-center text-xs"
+                >
+                  seam: server, runtime, CLI tests ask for worker-session
+                  behaviour, not storage mechanics
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <dl class="mt-5 grid gap-4 text-sm md:grid-cols-3">
+            <div>
+              <dt class="font-semibold">Files</dt>
+              <dd class="mt-1 font-mono text-xs text-slate-600">
+                apps/server/src/repository.ts<br />
+                apps/server/test/server.test.ts<br />
+                packages/core/src/transcript.ts
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Problem</dt>
+              <dd class="mt-1 text-slate-700">
+                HubRepository is a broad module; its interface almost mirrors
+                the product data model.
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Solution</dt>
+              <dd class="mt-1 text-slate-700">
+                Deepen session persistence so session lifecycle, review state,
+                item append, and transcript reads sit behind one cohesive seam.
+              </dd>
+            </div>
+          </dl>
+          <ul class="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+            <li>locality: SQL changes concentrate</li>
+            <li>leverage: one session seam</li>
+            <li>tests hit observable behaviour</li>
+          </ul>
+        </article>
+
+        <article
+          id="http-workflows"
+          class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="mr-auto text-2xl font-semibold">
+              Split HTTP workflow modules by domain
+            </h2>
+            <span
+              class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800"
+              >Strong</span
+            >
+            <span
+              class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              >in-process</span
+            >
+          </div>
+
+          <div class="mt-4 grid gap-6 lg:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                Before
+              </h3>
+              <pre class="mermaid">
+flowchart TB
+  R[registerApiRoutes] --> P[project routes]
+  R --> W[workspace routes]
+  R --> S[session routes]
+  R --> G[run group routes]
+  R --> V[review routes]
+  R --> T[transcript routes]
+  R --> H[parse helpers and error shaping]
+  S -.-> Runtime[Codex runtime]
+  S -.-> Repo[HubRepository]
+  V -.-> Repo
+  T -.-> Repo
+              </pre>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                After
+              </h3>
+              <pre class="mermaid">
+flowchart TB
+  App[createServer] --> Project[project HTTP module]
+  App --> Workspace[workspace HTTP module]
+  App --> Session[session HTTP module]
+  App --> Review[review HTTP module]
+  App --> Transcript[transcript HTTP module]
+  Shared[shared parse and error module] -. seam .- Project
+  Shared -. seam .- Session
+  Shared -. seam .- Review
+  Session --> Runtime[Codex runtime]
+  Session --> Store[worker session store]
+  Review --> Store
+  Transcript --> Store
+              </pre>
+            </div>
+          </div>
+
+          <dl class="mt-5 grid gap-4 text-sm md:grid-cols-3">
+            <div>
+              <dt class="font-semibold">Files</dt>
+              <dd class="mt-1 font-mono text-xs text-slate-600">
+                apps/server/src/server.ts<br />
+                apps/server/test/server.test.ts
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Problem</dt>
+              <dd class="mt-1 text-slate-700">
+                registerApiRoutes makes route behaviour, parse rules, runtime
+                calls, and response shapes share one large implementation.
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Solution</dt>
+              <dd class="mt-1 text-slate-700">
+                Keep one Fastify app, but deepen each HTTP workflow module so a
+                domain route owns its parsing, calls, and response shape.
+              </dd>
+            </div>
+          </dl>
+          <ul class="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+            <li>locality: route changes isolate</li>
+            <li>leverage: shared parse seam</li>
+            <li>tests target workflow modules</li>
+          </ul>
+        </article>
+
+        <article
+          id="cli-command-surface"
+          class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="mr-auto text-2xl font-semibold">
+              Deepen the CLI command surface
+            </h2>
+            <span
+              class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800"
+              >Worth exploring</span
+            >
+            <span
+              class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              >in-process</span
+            >
+          </div>
+
+          <div class="mt-4 grid gap-6 lg:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                Before
+              </h3>
+              <div class="space-y-2 text-sm">
+                <div class="rounded border border-slate-300 bg-white p-3">
+                  createProgram
+                </div>
+                <div class="grid gap-2 md:grid-cols-2">
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    command graph
+                  </div>
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    option parsing
+                  </div>
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    fetch calls
+                  </div>
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    human output
+                  </div>
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    JSON stability
+                  </div>
+                  <div class="rounded border border-amber-300 bg-amber-50 p-2">
+                    transcript formatting
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                After
+              </h3>
+              <div class="space-y-3 text-sm">
+                <div class="rounded border border-dashed border-slate-400 p-3">
+                  seam: command registration
+                </div>
+                <div class="grid gap-2 md:grid-cols-3">
+                  <div class="deep-module rounded p-3 text-center">
+                    project commands
+                  </div>
+                  <div class="deep-module rounded p-3 text-center">
+                    session commands
+                  </div>
+                  <div class="deep-module rounded p-3 text-center">
+                    review commands
+                  </div>
+                </div>
+                <div
+                  class="rounded border border-slate-300 bg-white p-3 text-center"
+                >
+                  shared output module protects human and JSON formats
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <dl class="mt-5 grid gap-4 text-sm md:grid-cols-3">
+            <div>
+              <dt class="font-semibold">Files</dt>
+              <dd class="mt-1 font-mono text-xs text-slate-600">
+                apps/cli/src/program.ts<br />
+                apps/cli/test/program.test.ts
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Problem</dt>
+              <dd class="mt-1 text-slate-700">
+                CLI command registration and output formatting live in one wide
+                module, so every new command touches the same seam.
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Solution</dt>
+              <dd class="mt-1 text-slate-700">
+                Move command groups and output rendering into deeper modules
+                while preserving createProgram as the top-level interface.
+              </dd>
+            </div>
+          </dl>
+          <ul class="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+            <li>locality: output rules concentrate</li>
+            <li>leverage: createProgram remains stable</li>
+            <li>tests survive command internals</li>
+          </ul>
+        </article>
+
+        <article
+          id="dogfood-scenario"
+          class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="mr-auto text-2xl font-semibold">
+              Deepen the dogfood scenario runner
+            </h2>
+            <span
+              class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800"
+              >Worth exploring</span
+            >
+            <span
+              class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700"
+              >ports &amp; adapters</span
+            >
+          </div>
+
+          <div class="mt-4 grid gap-6 lg:grid-cols-2">
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                Before
+              </h3>
+              <pre class="mermaid">
+flowchart LR
+  Runner[runDogfoodSmoke] --> Server[managed server]
+  Runner --> Api[SmokeApi]
+  Runner --> Scenario[start/continue/follow-up]
+  Runner --> Poll[wait loops]
+  Runner --> Report[summary formatter]
+  Runner --> Cli[argv and help]
+              </pre>
+            </div>
+
+            <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+              <h3
+                class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+              >
+                After
+              </h3>
+              <pre class="mermaid">
+flowchart LR
+  Cli[CLI adapter] --> Scenario[Dogfood scenario module]
+  Test[Test adapter] --> Scenario
+  Scenario --> Api[Codexhub API adapter]
+  Scenario --> Report[report module]
+  Scenario --> Friction[friction model]
+              </pre>
+            </div>
+          </div>
+
+          <dl class="mt-5 grid gap-4 text-sm md:grid-cols-3">
+            <div>
+              <dt class="font-semibold">Files</dt>
+              <dd class="mt-1 font-mono text-xs text-slate-600">
+                apps/server/src/dogfood-smoke.ts<br />
+                apps/server/test/dogfood-smoke.test.ts
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Problem</dt>
+              <dd class="mt-1 text-slate-700">
+                The smoke module mixes scenario intent, API calls, polling,
+                friction scoring, CLI parsing, and formatting.
+              </dd>
+            </div>
+            <div>
+              <dt class="font-semibold">Solution</dt>
+              <dd class="mt-1 text-slate-700">
+                Keep the scenario as the deep module and move CLI/API/reporting
+                to adapters at explicit seams.
+              </dd>
+            </div>
+          </dl>
+          <ul class="mt-4 grid gap-2 text-sm text-slate-700 md:grid-cols-3">
+            <li>locality: scenario owns intent</li>
+            <li>leverage: adapters reuse checks</li>
+            <li>tests avoid brittle process detail</li>
+          </ul>
+        </article>
+      </section>
+
+      <section
+        id="already-deep"
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h2 class="text-2xl font-semibold">Already deep enough for now</h2>
+        <div class="mt-4 grid gap-4 md:grid-cols-2">
+          <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+            <h3 class="font-semibold">Runtime seam</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-700">
+              CodexRuntimeController is an earned seam: in-process runtime,
+              supervisor client, and tests already justify multiple adapters.
+            </p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
+            <h3 class="font-semibold">Core transcript projection</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-700">
+              packages/core/src/transcript.ts has a small interface and hides a
+              meaningful implementation. Keep tests at that interface.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section
+        id="top-recommendation"
+        class="rounded-xl border border-slate-900 bg-slate-950 p-6 text-white"
+      >
+        <p
+          class="text-xs font-semibold uppercase tracking-wider text-slate-300"
+        >
+          Top recommendation
+        </p>
+        <h2 class="mt-2 text-2xl font-semibold">
+          Start with the worker session store
+        </h2>
+        <p class="mt-3 max-w-4xl text-sm leading-6 text-slate-200">
+          It has the highest leverage because the server, runtime, review gate,
+          transcript surfaces, and tests all touch that seam. Deepening it would
+          improve locality before changing more visible HTTP or CLI interfaces.
+        </p>
+        <a
+          class="mt-4 inline-block rounded bg-white px-4 py-2 text-sm font-semibold text-slate-950"
+          href="#session-store"
+          >Review candidate</a
+        >
+      </section>
+    </main>
+  </body>
+</html>

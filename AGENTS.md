@@ -89,6 +89,31 @@ Use the original task spec or GitHub issue as the source of truth for intent.
 Workers should not rewrite task intent after implementation to make the result
 look correct.
 
+## Canvas Agent Workflow
+
+Canvas-driven planning and AFK implementation setup lives under
+`docs/agents/`. These files map the Canvas workflow onto Codexhub's existing
+sources of truth instead of duplicating them:
+
+- `docs/agents/issue-tracker.md`: GitHub issue publishing and dependency rules.
+- `docs/agents/domain.md`: architecture and domain documentation sources.
+- `docs/agents/artifact-paths.md`: Canvas, PRD, DAG, evidence, and review paths.
+- `docs/agents/quality-gates.md`: pointer to the quality gates owned by this
+  file, `package.json`, and CI.
+- `docs/agents/worker-model.md`: pointer to the worker model in
+  `skills/codexhub/SKILL.md`, `docs/review-gate.md`, and task specs.
+- `docs/agents/review-policy.md`: mapping from the review gate to
+  worker/manager review modes.
+
+Repo-local workflow skills live under `skills/`, with `skills/SKILLSET.md` as
+the index. Use those skills for Canvas creation, PRD generation, issue DAG
+planning, AFK implementation management, TDD, diagnosis, architecture review,
+and review-loop orchestration.
+
+Keep repo-specific workflow rules single-sourced. If a workflow rule already
+has an owner in `docs/documentation-system.md`, reference that owner from
+`docs/agents/` instead of copying the full rule.
+
 ## Documentation Gate
 
 Every task needs a documentation-impact check before handoff, even if no docs
@@ -107,6 +132,9 @@ Common destinations:
 - `docs/symphony-lessons.md`: reusable and rejected Symphony assumptions.
 - `docs/github-issues.md`: local backlog synthesis; GitHub issues remain the
   active execution source of truth.
+- `docs/agents/`: Canvas-driven agent workflow setup, pointing to the relevant
+  repo sources of truth.
+- `skills/SKILLSET.md`: index for repo-local Canvas-driven workflow skills.
 - `skills/codexhub/SKILL.md`: using Codexhub as a control-plane skill outside
   this repo.
 

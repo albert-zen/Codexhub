@@ -1,0 +1,4 @@
+interface:
+  display_name: "Align With Canvas"
+  short_description: "Align architecture understanding and decisions."
+  default_prompt: "Use the architecture canvas to align on this design before implementation."

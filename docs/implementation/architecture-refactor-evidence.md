@@ -1,5 +1,91 @@
 # Architecture Refactor Evidence
 
+## AR-03 Runtime Protocol Adapter
+
+Date: 2026-05-21
+
+Scope: extracted Codex App Server protocol adaptation from `runtime.ts` without
+changing public API routes, CLI/GUI behavior, SQLite schema, runtime supervisor
+configuration, or Codex App Server protocol semantics.
+
+### Implementation Decisions
+
+- Added `apps/server/src/codex-app-server-adapter.ts` as the focused Codex App
+  Server adapter for JSON-RPC request and notification payload construction,
+  newline-delimited serialization, response extraction, stdout/stderr line
+  normalization, nested thread/turn id extraction, and native turn-event
+  normalization.
+- Kept `CodexRuntime` responsible for process lifecycle, pending request
+  bookkeeping, request id allocation, timeout handling, fake mode, and
+  repository side effects.
+- Preserved append-first raw event handling: parsed JSON payloads are appended
+  to the repository before pending response resolution or normalized
+  session-state effects are applied.
+- Preserved non-JSON diagnostic handling by normalizing stdout/stderr lines into
+  `{ stream, line }` raw items with the same trimmed line behavior.
+- Kept native event outcomes compatible: `turn/completed` moves to
+  `awaiting_input`; `turn/failed` and `turn/cancelled` fail the session with the
+  same JSON failure reason shape; `turn/input_required` and `turn/needs_input`
+  move to `awaiting_input`.
+- Reused the orphaned `apps/server/test/codex-app-server-adapter.test.ts` from
+  the failed session as useful WIP, then completed the adapter implementation
+  against it.
+
+### Coverage Added
+
+- `apps/server/test/codex-app-server-adapter.test.ts` covers JSON-RPC payload
+  construction for initialize, initialized, thread/start, turn/start, and
+  turn/steer; newline-delimited serialization; JSON-RPC response extraction;
+  nested Codex id extraction; stdout/stderr JSON versus diagnostic line
+  normalization; and native turn-event normalization.
+- Existing server runtime, supervisor, fake-mode, and API tests continue to
+  cover broader worker lifecycle behavior and structured
+  `session_process_unavailable` paths.
+
+### Commands Run
+
+- `pnpm --filter @codexhub/server test -- codex-app-server-adapter.test.ts`
+  Initially failed while the first adapter draft imported `@codexhub/core`
+  before core was built. The adapter was made self-contained for event status
+  normalization, then the command passed: 1 file, 5 tests.
+- `pnpm --filter @codexhub/core build`
+  Passed.
+- `pnpm --filter @codexhub/server check`
+  Initially surfaced one strict-null issue in the new adapter, which was fixed.
+  Rerun passed.
+- `pnpm --filter @codexhub/server test`
+  Passed: 9 files, 62 tests.
+- `pnpm format`
+  Passed after applying Prettier to touched files.
+- `git diff --check`
+  Passed.
+- `pnpm test`
+  Passed: core build, then core/server/cli/web tests.
+- `pnpm lint`
+  Passed.
+- `pnpm build`
+  Passed: core, server, CLI, and web builds.
+
+### Issues And Follow-Ups
+
+- Dogfood recovery note: AR-03 was resumed after the previous Codexhub
+  self-dogfood session was orphaned by API runtime ownership loss. This is
+  workflow issue #46 and was not treated as a code-review finding against the
+  implementation.
+- Follow-up candidate: continue tracking package-level server validation on
+  clean checkouts. The adapter test no longer needs a core build, but the
+  documented broader server checks still require `@codexhub/core` to be built
+  first.
+- No new product, API, CLI, GUI, schema, or supervisor follow-ups were found in
+  this slice.
+
+### Documentation Impact
+
+This evidence document is the required AR-03 documentation update. README,
+AGENTS, roadmap, PRD, DAG, CLI, GUI, schema, and supervisor documentation did
+not need changes because the public operator workflow and external contracts
+were intentionally kept unchanged.
+
 ## AR-02 Product Manager Command Module
 
 Date: 2026-05-21

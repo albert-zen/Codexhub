@@ -11,6 +11,21 @@ import {
   statusAfterSendMessage,
   statusAfterTurnCompleted,
 } from "@codexhub/core";
+import {
+  codexAppServerPayloadLine,
+  codexInitializedNotification,
+  codexInitializeRequest,
+  codexThreadStartRequest,
+  codexTurnStartRequest,
+  codexTurnSteerRequest,
+  extractCodexResponse,
+  extractThreadId,
+  extractTurnId,
+  normalizeCodexAppServerLine,
+  normalizeCodexNativeEvent,
+  type CodexAppServerPayload,
+  type CodexAppServerRequest,
+} from "./codex-app-server-adapter.js";
 import type { HubRepository } from "./repository.js";
 
 export interface StartOptions {
@@ -122,31 +137,22 @@ export class CodexRuntime implements CodexRuntimeController {
     try {
       await this.sendRequest(
         managed,
-        "initialize",
-        {
-          capabilities: { experimentalApi: true },
-          clientInfo: {
-            name: "codexhub",
-            title: "Codexhub",
-            version: "0.1.0",
-          },
-        },
+        codexInitializeRequest,
         codexOptions.responseTimeoutMs,
       );
-      this.sendNotification(managed, "initialized", {});
+      this.sendPayload(managed, codexInitializedNotification());
 
       const threadResult = await this.sendRequest(
         managed,
-        "thread/start",
-        {
-          approvalPolicy: codexOptions.approvalPolicy ?? "never",
-          sandbox: codexOptions.threadSandbox ?? "workspace-write",
-          cwd: workspace.cwd,
-          dynamicTools: [],
-        },
+        (id) =>
+          codexThreadStartRequest(id, {
+            approvalPolicy: codexOptions.approvalPolicy ?? "never",
+            sandbox: codexOptions.threadSandbox ?? "workspace-write",
+            cwd: workspace.cwd,
+          }),
         codexOptions.responseTimeoutMs,
       );
-      const threadId = extractNestedString(threadResult, ["thread", "id"]);
+      const threadId = extractThreadId(threadResult);
       if (!threadId)
         throw new Error(
           "Codex thread/start response did not include thread.id",
@@ -159,7 +165,7 @@ export class CodexRuntime implements CodexRuntimeController {
         options.initialMessage.content,
         codexOptions,
       );
-      const turnId = extractNestedString(turnResult, ["turn", "id"]);
+      const turnId = extractTurnId(turnResult);
       this.repo.markMessageSent(options.initialMessage.id, 3);
       return this.repo.updateSession(session.id, {
         status: "running",
@@ -220,15 +226,14 @@ export class CodexRuntime implements CodexRuntimeController {
       const content = options.message.content.trim();
       if (!content) throw new Error("steer message content is required");
       const requestId = this.nextRequestId(managed);
-      this.sendPayload(managed, {
-        method: "turn/steer",
-        id: requestId,
-        params: {
+      this.sendPayload(
+        managed,
+        codexTurnSteerRequest(requestId, {
           threadId: session.codex_thread_id,
           expectedTurnId: session.codex_turn_id,
-          input: [{ type: "text", text: content }],
-        },
-      });
+          inputText: content,
+        }),
+      );
       this.repo.markMessageSent(options.message.id, requestId);
       return this.repo.updateSession(session.id, {
         status: statusAfterSendMessage(mode) ?? session.status,
@@ -244,7 +249,7 @@ export class CodexRuntime implements CodexRuntimeController {
       text,
       {},
     );
-    const turnId = extractNestedString(result, ["turn", "id"]);
+    const turnId = extractTurnId(result);
     this.repo.markMessageSent(options.message.id, 3);
     return this.repo.updateSession(session.id, {
       status: statusAfterSendMessage(mode) ?? "running",
@@ -294,17 +299,16 @@ export class CodexRuntime implements CodexRuntimeController {
   ): Promise<unknown> {
     return this.sendRequest(
       managed,
-      "turn/start",
-      {
-        threadId,
-        input: [{ type: "text", text: message }],
-        cwd: workspace.cwd,
-        title: "Codexhub Worker",
-        approvalPolicy: codexOptions.approvalPolicy ?? "never",
-        sandboxPolicy:
-          codexOptions.sandboxPolicy ??
-          defaultWorkspaceSandboxPolicy(workspace),
-      },
+      (id) =>
+        codexTurnStartRequest(id, {
+          threadId,
+          inputText: message,
+          cwd: workspace.cwd,
+          approvalPolicy: codexOptions.approvalPolicy ?? "never",
+          sandboxPolicy:
+            codexOptions.sandboxPolicy ??
+            defaultWorkspaceSandboxPolicy(workspace),
+        }),
       codexOptions.responseTimeoutMs,
     );
   }
@@ -411,64 +415,61 @@ export class CodexRuntime implements CodexRuntimeController {
     stream: "stdout" | "stderr",
     line: string,
   ): void {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(trimmed);
-    } catch {
-      this.repo.appendItem(managed.sessionId, { stream, line: trimmed });
+    const normalizedLine = normalizeCodexAppServerLine(stream, line);
+    if (normalizedLine.type === "empty") return;
+    if (normalizedLine.type === "diagnostic") {
+      this.repo.appendItem(managed.sessionId, normalizedLine.item);
       return;
     }
 
+    const payload = normalizedLine.payload;
     this.repo.appendItem(managed.sessionId, payload);
-    const record = asRecord(payload) ?? {};
-    const responseId = typeof record?.id === "number" ? record.id : null;
-    if (responseId !== null) {
-      const pending = managed.pending.get(responseId);
+    const response = extractCodexResponse(payload);
+    if (response) {
+      const pending = managed.pending.get(response.id);
       if (pending) {
-        managed.pending.delete(responseId);
+        managed.pending.delete(response.id);
         clearTimeout(pending.timer);
-        if ("error" in record) {
-          pending.reject(new Error(JSON.stringify(record.error)));
+        if ("error" in response) {
+          pending.reject(new Error(JSON.stringify(response.error)));
         } else {
-          pending.resolve(record.result);
+          pending.resolve(response.result);
         }
       }
     }
 
-    const method = typeof record?.method === "string" ? record.method : null;
-    if (method === "turn/completed") {
+    const nativeEvent = normalizeCodexNativeEvent(payload);
+    if (nativeEvent.type === "turn_completed") {
       this.repo.updateSession(managed.sessionId, {
-        status: statusAfterTurnCompleted(),
+        status: nativeEvent.status,
       });
-    } else if (method === "turn/failed" || method === "turn/cancelled") {
+    } else if (nativeEvent.type === "turn_failed") {
       this.repo.updateSession(managed.sessionId, {
-        status: "failed",
-        failure_reason: JSON.stringify(record.params ?? record),
+        status: nativeEvent.status,
+        failure_reason: nativeEvent.failureReason,
         ended_at: new Date().toISOString(),
       });
-    } else if (
-      method === "turn/input_required" ||
-      method === "turn/needs_input"
-    ) {
-      this.repo.updateSession(managed.sessionId, { status: "awaiting_input" });
+    } else if (nativeEvent.type === "input_required") {
+      this.repo.updateSession(managed.sessionId, {
+        status: nativeEvent.status,
+      });
     }
   }
 
   private sendRequest(
     managed: ManagedSession,
-    method: string,
-    params: unknown,
+    createRequest: (id: number) => CodexAppServerRequest,
     timeoutMs = DEFAULT_RESPONSE_TIMEOUT_MS,
   ): Promise<unknown> {
     const requestId = this.nextRequestId(managed);
+    const request = createRequest(requestId);
     const promise = new Promise<unknown>((resolveResponse, rejectResponse) => {
       const timer = setTimeout(() => {
         managed.pending.delete(requestId);
         rejectResponse(
-          new Error(`Codex request ${method} timed out after ${timeoutMs}ms`),
+          new Error(
+            `Codex request ${request.method} timed out after ${timeoutMs}ms`,
+          ),
         );
       }, timeoutMs);
       managed.pending.set(requestId, {
@@ -477,20 +478,15 @@ export class CodexRuntime implements CodexRuntimeController {
         timer,
       });
     });
-    this.sendPayload(managed, { method, id: requestId, params });
+    this.sendPayload(managed, request);
     return promise;
   }
 
-  private sendNotification(
+  private sendPayload(
     managed: ManagedSession,
-    method: string,
-    params: unknown,
+    payload: CodexAppServerPayload,
   ): void {
-    this.sendPayload(managed, { method, params });
-  }
-
-  private sendPayload(managed: ManagedSession, payload: unknown): void {
-    managed.process.stdin.write(`${JSON.stringify(payload)}\n`);
+    managed.process.stdin.write(codexAppServerPayloadLine(payload));
   }
 
   private nextRequestId(managed: ManagedSession): number {
@@ -789,22 +785,6 @@ function parseEnv(value: unknown): Record<string, string> | undefined {
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-}
-
-function extractNestedString(value: unknown, path: string[]): string | null {
-  let current: unknown = value;
-  for (const key of path) {
-    const record = asRecord(current);
-    if (!record) return null;
-    current = record[key];
-  }
-  return typeof current === "string" ? current : null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
 }
 
 function requireString(value: string | null, name: string): string {

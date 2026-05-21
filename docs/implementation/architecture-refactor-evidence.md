@@ -1,5 +1,106 @@
 # Architecture Refactor Evidence
 
+## AR-05 Planning / Presentation Helpers
+
+Date: 2026-05-21
+
+Scope: introduced a focused shared Planning / Presentation helper for session
+action availability and wired the existing web action presenter to consume it,
+without changing API route behavior, CLI output, GUI labels, disabled states, or
+JSON contracts.
+
+### Implementation Decisions
+
+- Added `packages/core/src/session-presentation.ts` as the shared home for the
+  first behavior-backed presentation rule set: `steer`, `continue`, `stop`, and
+  `complete` action availability for operator-facing session views.
+- Kept the helper small and pure. It accepts session status, message content,
+  and the currently submitting action, then returns the same action labels,
+  disabled flags, and reason strings the web UI already used.
+- Reused core state-machine rules for send eligibility:
+  `canSendMessage(status, "steer")` and
+  `canSendMessage(status, "continue")`. The presentation helper adds only the
+  operator-facing message-content, submitting, and stop/complete affordance
+  interpretation.
+- Exported the helper surface from `packages/core/src/index.ts` so AR-06 can
+  consume it from CLI or GUI code without reaching into app-local modules.
+- Replaced `apps/web/src/session-actions.ts` with a compatibility re-export
+  over the shared core helper. Existing production imports in
+  `apps/web/src/main.tsx` and existing web tests continue to use the same local
+  module path while executing the shared core implementation.
+- No server route helper, API response assembler, CLI formatter, transcript
+  metadata, latest-result selection, run group dashboard, SQLite schema, route
+  path, pagination, cursor, or raw/debug default behavior changed in this
+  slice.
+
+### Coverage Added
+
+- `packages/core/src/session-presentation.test.ts` covers the shared
+  presentation rules for:
+  - `steer` availability while running or awaiting input with non-empty content;
+  - `continue` availability only while awaiting input with non-empty content;
+  - non-empty message requirements for send actions;
+  - `stop` and `complete` availability before terminal states only;
+  - terminal send guidance pointing operators to follow-up sessions;
+  - submitting-state disabling for all actions.
+- Existing `apps/web/src/session-actions.test.ts` remains as compatibility
+  coverage for the web import surface and preserved GUI reason strings.
+
+### Validation
+
+- `pnpm --filter @codexhub/core build`
+  Passed.
+- `pnpm --filter @codexhub/core test`
+  Passed: 8 files, 36 tests after the package build artifacts were present.
+- `pnpm --filter @codexhub/web test -- session-actions.test.ts`
+  Passed: 1 file, 3 tests.
+- `pnpm --filter @codexhub/server test`
+  Passed: 9 files, 62 tests.
+- `pnpm --filter @codexhub/server check`
+  Passed.
+- `pnpm --filter @codexhub/web test`
+  Passed: 4 files, 13 tests.
+- `pnpm --filter @codexhub/web check`
+  Passed.
+- `pnpm format`
+  Initially failed on Prettier formatting in touched files; after applying
+  Prettier to the touched files, rerun passed.
+- `pnpm lint`
+  Passed.
+- `git diff --check`
+  Passed.
+
+### Compatibility Notes
+
+- GUI labels are preserved: `Send Steer`, `Continue`, `Stop`, and `Complete`.
+- GUI disabled-state reason strings are preserved, including non-empty message
+  requirements, terminal follow-up guidance, status-specific send guidance, and
+  submitting-state messages.
+- Session action availability remains compatible with current web behavior and
+  shared state-machine rules:
+  - `steer`: running or awaiting input, plus non-empty message;
+  - `continue`: awaiting input, plus non-empty message;
+  - `stop`/`complete`: starting, running, or awaiting input.
+- API/CLI/GUI public contracts remain unchanged. The web module path remains in
+  place as an app-local compatibility surface, and `@codexhub/core` now owns the
+  reusable rule.
+
+### Issues And Follow-Ups
+
+- No new Codexhub dogfood friction was discovered in this slice.
+- Follow-up for AR-06: CLI and GUI callers can now import session action
+  availability from `@codexhub/core`; later slices should move additional
+  bounded latest-result, transcript-window, or dashboard interpretation rules
+  only when a production caller consumes them.
+
+### Documentation Impact
+
+This evidence document is the required AR-05 documentation update. README,
+AGENTS, roadmap, review-gate, runtime-supervisor, CLI, GUI, schema, and
+workflow-skill documentation did not need changes because this slice introduced
+an internal shared presentation helper while preserving operator-facing behavior
+and external contracts.
+
 ## AR-04 State Substrate Split, Slices 1-2
 
 Date: 2026-05-21

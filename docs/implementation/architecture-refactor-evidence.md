@@ -1,5 +1,76 @@
 # Architecture Refactor Evidence
 
+## AR-06 CLI / GUI Presentation Alignment
+
+Date: 2026-05-21
+
+Scope: audited CLI and GUI consumers for duplicated session action availability
+rules, then aligned the GUI production consumer with the shared
+`@codexhub/core` presentation contract without changing CLI output, GUI labels,
+disabled states, workflows, API responses, transcript views, or raw item views.
+
+### Implementation Decisions
+
+- Updated `apps/web/src/main.tsx` to import `SESSION_ACTIONS`,
+  `getSessionActionAvailability`, and `SessionAction` directly from
+  `@codexhub/core`.
+- Removed the app-local `apps/web/src/session-actions.ts` compatibility
+  re-export because production GUI code no longer needs an intermediary module.
+- Updated `apps/web/src/session-actions.test.ts` to exercise the same shared
+  core helper imported through the package boundary while preserving the web
+  compatibility assertions for labels and reason strings.
+- Audited `apps/cli/src/program.ts`. The CLI has no current session action
+  availability presenter and does not duplicate session-status eligibility for
+  `steer`, `continue`, `stop`, or `complete`. `session send` keeps only command
+  input validation for non-empty content and `--mode`; runtime/session
+  eligibility remains an API responsibility. `session stop` posts to the API and
+  formats the response. No CLI code change was needed.
+- No server route helpers, repository projections, runtime behavior, Product
+  Manager logic, CLI JSON fields, CLI human output strings, GUI button labels,
+  GUI disabled-state text, transcript rendering, raw item rendering, or
+  workflows changed.
+
+### Validation
+
+- `pnpm --filter @codexhub/core build`
+  Passed.
+- `pnpm --filter @codexhub/web test`
+  Passed: 4 files, 13 tests.
+- `pnpm --filter @codexhub/web check`
+  Passed.
+- `pnpm format`
+  Initially reported Prettier differences in the touched files; after applying
+  Prettier to those files, rerun passed.
+- `pnpm lint`
+  Passed.
+- `git diff --check`
+  Passed.
+- CLI gates were not run because CLI code was audited but not touched; no CLI
+  command output contract changed.
+
+### Compatibility Notes
+
+- GUI action labels remain `Send Steer`, `Continue`, `Stop`, and `Complete`.
+- GUI action disabled-state calculations and reason strings remain owned by the
+  shared core helper introduced in AR-05.
+- CLI JSON and human output remain stable because AR-06 made no CLI code
+  changes and found no CLI-local duplicate of the core session action
+  availability rules.
+- Transcript and raw item views were not modified.
+
+### Issues And Follow-Ups
+
+- No new Codexhub dogfood friction was discovered in this slice.
+- No follow-up issues were found for AR-06.
+
+### Documentation Impact
+
+This evidence section is the required AR-06 documentation update. README,
+AGENTS, roadmap, review-gate, CLI, GUI, schema, and workflow-skill
+documentation did not need changes because this slice only removed a redundant
+web compatibility wrapper and preserved all operator-facing behavior and
+external contracts.
+
 ## AR-05 Planning / Presentation Helpers
 
 Date: 2026-05-21

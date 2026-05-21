@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { getSessionActionAvailability } from "./session-actions.js";
+import { getSessionActionAvailability } from "@codexhub/core";
 
 describe("getSessionActionAvailability", () => {
   it("explains terminal sessions and does not allow sends", () => {

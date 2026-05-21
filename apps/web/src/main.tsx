@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { SESSION_ACTIONS, getSessionActionAvailability } from "@codexhub/core";
 import type {
   ID,
   Item,
@@ -14,12 +15,8 @@ import type {
   WorkerSession,
   WorkerSessionStatus,
   Workspace,
+  SessionAction,
 } from "@codexhub/core";
-import {
-  SESSION_ACTIONS,
-  getSessionActionAvailability,
-  type SessionAction,
-} from "./session-actions.js";
 import {
   buildFollowUpSessionRequest,
   buildStartSessionRequest,

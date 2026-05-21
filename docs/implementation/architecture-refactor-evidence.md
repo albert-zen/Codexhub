@@ -1,5 +1,80 @@
 # Architecture Refactor Evidence
 
+## AR-02 Product Manager Command Module
+
+Date: 2026-05-21
+
+Scope: extracted worker lifecycle product commands from Fastify session routes
+without changing route paths, response DTOs, CLI/GUI behavior, or SQLite schema.
+
+### Implementation Decisions
+
+- Added `apps/server/src/product-manager.ts` as the server-side Product Manager
+  module for worker lifecycle commands: start worker, start follow-up worker,
+  send steer/continue/initial-shaped messages, stop worker, and complete worker.
+- Kept Fastify route handlers responsible for HTTP parsing, enum parsing, and
+  HTTP status/detail mapping. Product Manager throws `ProductManagerError`
+  values with product codes and details, not Fastify request/reply objects.
+- Product Manager depends on `HubRepository` and `CodexRuntimeController`,
+  centralizing session creation, task spec persistence/merge behavior, message
+  creation, runtime calls, terminal/follow-up checks, and unavailable-runtime
+  persistence.
+- Follow-up endpoint affordances remain HTTP-layer details. Product Manager
+  reports `session_process_unavailable` with the session id and follow-up
+  availability; the route mapper adds the versioned route prefix.
+- Existing non-migrated reads, review records, run groups, workspace cleanup,
+  workspace creation, and runtime protocol handling were left in place for later
+  AR slices.
+
+### Coverage Added
+
+- `apps/server/test/product-manager.test.ts` covers Product Manager behavior
+  directly with a fake runtime and in-memory SQLite repository:
+  start worker persistence, follow-up worker task-spec merge, send message
+  persistence/runtime handoff, stop/complete runtime handoff, and unavailable
+  runtime failure persistence.
+- Existing API tests continue to cover public route response shapes, follow-up
+  errors, ambiguous session references, terminal follow-up rejection, and
+  structured unavailable-runtime responses.
+
+### Commands Run
+
+- `pnpm --filter @codexhub/server check`
+  Failed before building `@codexhub/core`: TypeScript could not resolve the
+  core package entry on this clean checkout. The same run also surfaced a new
+  strict optional `sender_id` issue in `product-manager.ts`, which was fixed.
+- `pnpm --filter @codexhub/core build`
+  Passed.
+- `pnpm --filter @codexhub/server check`
+  Passed.
+- `pnpm --filter @codexhub/server test -- product-manager.test.ts`
+  Passed: 1 file, 5 tests.
+- `pnpm --filter @codexhub/server test`
+  Passed: 8 files, 57 tests.
+- `pnpm format`
+  Passed.
+- `git diff --check`
+  Passed.
+
+### Issues And Follow-Ups
+
+- Dogfood friction: package-level server checks still require
+  `@codexhub/core` to be built first on a clean checkout. This is documented in
+  `AGENTS.md` and was observed again during AR-02 validation.
+- GitHub issue
+  [#45](https://github.com/albert-zen/Codexhub/issues/45) tracks the residual
+  wrong-mode send API contract characterization risk.
+- The Product Manager boundary is a real orchestration move, but AR-03/AR-04
+  still own runtime protocol extraction and repository/state substrate
+  splitting.
+
+### Documentation Impact
+
+This evidence document is the required AR-02 documentation update. README,
+AGENTS, roadmap, PRD, DAG, CLI, GUI, and schema documentation did not need
+changes because the public API and operator workflow were intentionally kept
+unchanged.
+
 ## AR-01 Characterization Coverage
 
 Date: 2026-05-21

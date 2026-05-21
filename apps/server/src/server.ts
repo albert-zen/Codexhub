@@ -6,16 +6,14 @@ import type {
   ItemType,
   MessageMode,
   SenderType,
-  TaskSpecMetadata,
   TranscriptPageOptions,
   WorkerSession,
 } from "@codexhub/core";
-import { canStartFollowUpSession, isTerminalStatus } from "@codexhub/core";
+import { isTerminalStatus } from "@codexhub/core";
 import { openDatabase, type CodexHubDatabase } from "./database.js";
 import {
   HubRepository,
   type CreateReviewFindingInput,
-  type CreateTaskSpecInput,
   type ItemPageOptions,
   type ReviewFindingListOptions,
   type RunGroupSessionListOptions,
@@ -23,11 +21,8 @@ import {
   type UpdateReviewFindingInput,
   type UpdateReviewGateStatusInput,
 } from "./repository.js";
-import {
-  CodexRuntime,
-  SessionProcessUnavailableError,
-  type CodexRuntimeController,
-} from "./runtime.js";
+import { CodexRuntime, type CodexRuntimeController } from "./runtime.js";
+import { ProductManager, ProductManagerError } from "./product-manager.js";
 import {
   RuntimeSupervisorUnavailableError,
   SupervisorRuntimeClient,
@@ -45,7 +40,7 @@ export interface CreateServerOptions {
 interface ServerState {
   database: CodexHubDatabase;
   repo: HubRepository;
-  runtime: CodexRuntimeController;
+  productManager: ProductManager;
 }
 
 export async function createServer(options: CreateServerOptions = {}) {
@@ -59,7 +54,8 @@ export async function createServer(options: CreateServerOptions = {}) {
     (options.runtimeSupervisorUrl
       ? new SupervisorRuntimeClient(repo, options.runtimeSupervisorUrl)
       : new CodexRuntime(repo));
-  const state: ServerState = { database, repo, runtime };
+  const productManager = new ProductManager({ repo, runtime });
+  const state: ServerState = { database, repo, productManager };
   await reconcileUnavailableRuntimeSessions(app, repo, runtime);
 
   app.setErrorHandler((error, _request, reply) => {
@@ -68,6 +64,17 @@ export async function createServer(options: CreateServerOptions = {}) {
       return reply.status(err.statusCode).send({
         error: { code: err.code, message: err.message, ...err.details },
         message: err.message,
+      });
+    }
+    if (err instanceof ProductManagerError) {
+      const httpError = productManagerHttpError(err);
+      return reply.status(httpError.statusCode).send({
+        error: {
+          code: httpError.code,
+          message: httpError.message,
+          ...httpError.details,
+        },
+        message: httpError.message,
       });
     }
     if (err instanceof RuntimeSupervisorUnavailableError) {
@@ -338,124 +345,36 @@ function registerApiRoutes(
 
   app.post(path("/sessions"), async (request) => {
     const body = asRecord(request.body);
-    const workspace = state.repo.getWorkspace(
-      requiredString(body, "workspace_id"),
-    );
-    if (!workspace)
-      throw new HttpError(404, "workspace_not_found", "workspace not found");
-    const project = state.repo.getProject(
-      optionalString(body, "project_id") ?? workspace.project_id,
-    );
-    if (!project)
-      throw new HttpError(404, "project_not_found", "project not found");
-    const prompt =
-      optionalString(body, "initial_message") ?? optionalString(body, "prompt");
-    if (!prompt || prompt.trim() === "")
-      throw new HttpError(
-        400,
-        "prompt_required",
-        "initial_message or prompt is required",
-      );
-
-    const session = state.repo.createSession({
-      project_id: project.id,
-      workspace_id: workspace.id,
-    });
-    const taskSpec = parseTaskSpec(optionalRecord(body, "task_spec"));
-    if (taskSpec) {
-      state.repo.createTaskSpec({ session_id: session.id, ...taskSpec });
-    }
-    const message = state.repo.createMessage({
-      session_id: session.id,
-      mode: "initial",
-      content: prompt,
-      sender_type:
+    return state.productManager.startWorker({
+      workspaceId: requiredString(body, "workspace_id"),
+      projectId: optionalString(body, "project_id"),
+      prompt:
+        optionalString(body, "initial_message") ??
+        optionalString(body, "prompt"),
+      taskSpec: optionalRecord(body, "task_spec"),
+      senderType:
         parseSenderType(optionalString(body, "sender_type")) ?? "manager_agent",
-      sender_id: optionalString(body, "sender_id"),
+      senderId: optionalString(body, "sender_id"),
+      codexOptions: body.codex_options,
     });
-
-    const started = await state.runtime.startSession(session, workspace, {
-      initialMessage: message,
-      codexOptions: body.codex_options ?? project.default_codex_options,
-    });
-    return { session: started, workspace };
   });
 
   app.post(path("/sessions/:id/follow-up"), async (request) => {
-    const previousSession = requireSession(
-      state.repo,
-      requiredString(asRecord(request.params), "id"),
-    );
-    if (!canStartFollowUpSession(previousSession.status)) {
-      throw new HttpError(
-        409,
-        "session_not_terminal",
-        `session is ${previousSession.status}; follow-up sessions require a stopped, completed, or failed source session`,
-      );
-    }
-
     const body = asRecord(request.body);
-    const workspaceId =
-      optionalString(body, "workspace_id") ??
-      optionalString(body, "workspace") ??
-      previousSession.workspace_id;
-    const workspace = state.repo.getWorkspace(workspaceId);
-    if (!workspace)
-      throw new HttpError(404, "workspace_not_found", "workspace not found");
-    if (workspace.project_id !== previousSession.project_id) {
-      throw new HttpError(
-        400,
-        "workspace_project_mismatch",
-        "follow-up workspace must belong to the previous session project",
-      );
-    }
-
-    const project = state.repo.getProject(previousSession.project_id);
-    if (!project)
-      throw new HttpError(404, "project_not_found", "project not found");
-    const prompt =
-      optionalString(body, "initial_message") ?? optionalString(body, "prompt");
-    if (!prompt || prompt.trim() === "") {
-      throw new HttpError(
-        400,
-        "prompt_required",
-        "initial_message or prompt is required",
-      );
-    }
-
-    const session = state.repo.createSession({
-      project_id: previousSession.project_id,
-      workspace_id: workspace.id,
-      previous_session_id: previousSession.id,
-    });
-    const previousTaskSpec = state.repo.getTaskSpec(previousSession.id);
-    const taskSpec = mergeTaskSpec(
-      previousTaskSpec,
-      optionalRecord(body, "task_spec"),
-    );
-    if (taskSpec) {
-      state.repo.createTaskSpec({ session_id: session.id, ...taskSpec });
-    }
-    const message = state.repo.createMessage({
-      session_id: session.id,
-      mode: "initial",
-      content: prompt,
-      sender_type:
+    return state.productManager.startFollowUpWorker({
+      previousSessionReference: requiredString(asRecord(request.params), "id"),
+      workspaceId:
+        optionalString(body, "workspace_id") ??
+        optionalString(body, "workspace"),
+      prompt:
+        optionalString(body, "initial_message") ??
+        optionalString(body, "prompt"),
+      taskSpec: optionalRecord(body, "task_spec"),
+      senderType:
         parseSenderType(optionalString(body, "sender_type")) ?? "manager_agent",
-      sender_id: optionalString(body, "sender_id"),
+      senderId: optionalString(body, "sender_id"),
+      codexOptions: body.codex_options,
     });
-
-    const started = await state.runtime.startSession(session, workspace, {
-      initialMessage: message,
-      codexOptions: body.codex_options ?? project.default_codex_options,
-    });
-    return {
-      session: started,
-      previous_session_id: previousSession.id,
-      previous_session: previousSession,
-      workspace,
-      task_spec: state.repo.getTaskSpec(session.id),
-    };
   });
 
   app.get(path("/sessions"), async (request) => {
@@ -490,68 +409,32 @@ function registerApiRoutes(
   });
 
   app.post(path("/sessions/:id/messages"), async (request) => {
-    const session = requireSession(
-      state.repo,
-      requiredString(asRecord(request.params), "id"),
-    );
-    const workspace = state.repo.getWorkspace(session.workspace_id);
-    if (!workspace)
-      throw new HttpError(404, "workspace_not_found", "workspace not found");
-    if (isTerminalStatus(session.status))
-      throw new HttpError(
-        409,
-        "session_terminal",
-        `session is ${session.status}`,
-      );
-
     const body = asRecord(request.body);
     const mode = parseMessageMode(requiredString(body, "mode"));
     const content = optionalString(body, "content") ?? "";
-    if (mode === "steer" && content.trim() === "")
-      throw new HttpError(400, "message_required", "steer content is required");
-    if (mode === "continue" && content.trim() === "")
-      throw new HttpError(
-        400,
-        "message_required",
-        "continue content is required",
-      );
-
-    const message = state.repo.createMessage({
-      session_id: session.id,
-      mode,
-      content,
-      sender_type:
-        parseSenderType(optionalString(body, "sender_type")) ?? "human",
-      sender_id: optionalString(body, "sender_id"),
-    });
-
-    let updatedSession: WorkerSession;
     try {
-      updatedSession = await state.runtime.sendMessage(session, workspace, {
-        message,
+      return await state.productManager.sendWorkerMessage({
+        sessionReference: requiredString(asRecord(request.params), "id"),
+        mode,
+        content,
+        senderType:
+          parseSenderType(optionalString(body, "sender_type")) ?? "human",
+        senderId: optionalString(body, "sender_id"),
       });
     } catch (error) {
-      if (error instanceof SessionProcessUnavailableError) {
-        persistUnavailableSession(state.repo, error.sessionId, message.id, {
-          failureReason: error.message,
-        });
-        throw new HttpError(409, error.code, error.message, {
-          session_id: error.sessionId,
-          follow_up_available: true,
+      if (
+        error instanceof ProductManagerError &&
+        error.code === "session_process_unavailable"
+      ) {
+        const sessionId = String(error.details.session_id);
+        throw productManagerHttpError(error, {
           follow_up_endpoint: path(
-            `/sessions/${encodeURIComponent(error.sessionId)}/follow-up`,
+            `/sessions/${encodeURIComponent(sessionId)}/follow-up`,
           ),
         });
       }
       throw error;
     }
-    return {
-      message:
-        state.repo
-          .listMessages(session.id)
-          .find((entry) => entry.id === message.id) ?? message,
-      session: updatedSession,
-    };
   });
 
   app.get(path("/sessions/:id/messages"), async (request) => {
@@ -644,20 +527,18 @@ function registerApiRoutes(
   });
 
   app.post(path("/sessions/:id/stop"), async (request) => {
-    const session = requireSession(
-      state.repo,
+    const session = await state.productManager.stopWorker(
       requiredString(asRecord(request.params), "id"),
     );
-    await state.runtime.stopSession(session.id);
-    return { session: requireSession(state.repo, session.id) };
+    return { session };
   });
 
   app.post(path("/sessions/:id/complete"), async (request) => {
-    const session = requireSession(
-      state.repo,
-      requiredString(asRecord(request.params), "id"),
-    );
-    return { session: await state.runtime.completeSession(session.id) };
+    return {
+      session: await state.productManager.completeWorker(
+        requiredString(asRecord(request.params), "id"),
+      ),
+    };
   });
 
   app.get(path("/sessions/:id/items"), async (request) => {
@@ -694,21 +575,6 @@ function registerApiRoutes(
   app.get(path("/sessions/:id/latest"), async (request) =>
     latestResponse(state, request, true),
   );
-}
-
-function persistUnavailableSession(
-  repo: HubRepository,
-  sessionId: string,
-  messageId: string,
-  options: { failureReason: string },
-): void {
-  repo.markMessageFailed(messageId, options.failureReason);
-  repo.updateSession(sessionId, {
-    status: "failed",
-    failure_reason: options.failureReason,
-    process_pid: null,
-    ended_at: new Date().toISOString(),
-  });
 }
 
 function itemPageResponse(
@@ -882,6 +748,45 @@ class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+function productManagerHttpError(
+  error: ProductManagerError,
+  details: Record<string, unknown> = {},
+): HttpError {
+  return new HttpError(
+    productManagerStatusCode(error.code),
+    error.code,
+    error.message,
+    { ...error.details, ...details },
+  );
+}
+
+function productManagerStatusCode(code: string): number {
+  if (
+    code === "prompt_required" ||
+    code === "message_required" ||
+    code === "invalid_task_spec" ||
+    code === "workspace_project_mismatch"
+  ) {
+    return 400;
+  }
+  if (
+    code === "workspace_not_found" ||
+    code === "project_not_found" ||
+    code === "session_not_found"
+  ) {
+    return 404;
+  }
+  if (
+    code === "session_id_ambiguous" ||
+    code === "session_not_terminal" ||
+    code === "session_terminal" ||
+    code === "session_process_unavailable"
+  ) {
+    return 409;
+  }
+  return 500;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -1118,91 +1023,4 @@ function optionalNullableReviewString(
   if (value === null) return null;
   if (typeof value === "string") return value;
   throw new HttpError(400, "invalid_review_finding", `${key} must be string`);
-}
-
-function parseTaskSpec(
-  record: Record<string, unknown> | null,
-): Omit<CreateTaskSpecInput, "session_id"> | null {
-  if (!record) return null;
-  const taskSpec = {
-    ref: optionalNullableString(record, "ref"),
-    title: optionalNullableString(record, "title"),
-    intent: optionalNullableString(record, "intent"),
-    scope: optionalNullableString(record, "scope"),
-    acceptance_criteria: optionalNullableString(record, "acceptance_criteria"),
-    raw: optionalNullableString(record, "raw"),
-  };
-  const hasValue = Object.values(taskSpec).some(
-    (value) => typeof value === "string" && value.trim() !== "",
-  );
-  return hasValue ? taskSpec : null;
-}
-
-const taskSpecFields = [
-  "ref",
-  "title",
-  "intent",
-  "scope",
-  "acceptance_criteria",
-  "raw",
-] as const;
-
-type TaskSpecField = (typeof taskSpecFields)[number];
-type TaskSpecInputMetadata = Omit<CreateTaskSpecInput, "session_id">;
-
-function mergeTaskSpec(
-  source: TaskSpecMetadata | null,
-  overrides: Record<string, unknown> | null,
-): TaskSpecInputMetadata | null {
-  const taskSpec = copyTaskSpec(source);
-  if (!overrides) return taskSpec;
-
-  const merged = taskSpec ?? emptyTaskSpec();
-  let hasOverrideValue = false;
-  for (const field of taskSpecFields) {
-    const value = overrides[field];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== "string") {
-      throw new HttpError(400, "invalid_task_spec", `${field} must be string`);
-    }
-    merged[field] = value;
-    hasOverrideValue ||= value.trim() !== "";
-  }
-
-  return taskSpec || hasOverrideValue ? merged : null;
-}
-
-function emptyTaskSpec(): Record<TaskSpecField, string | null> {
-  return {
-    ref: null,
-    title: null,
-    intent: null,
-    scope: null,
-    acceptance_criteria: null,
-    raw: null,
-  };
-}
-
-function copyTaskSpec(
-  taskSpec: TaskSpecMetadata | null,
-): TaskSpecInputMetadata | null {
-  if (!taskSpec) return null;
-  return {
-    ref: taskSpec.ref,
-    title: taskSpec.title,
-    intent: taskSpec.intent,
-    scope: taskSpec.scope,
-    acceptance_criteria: taskSpec.acceptance_criteria,
-    raw: taskSpec.raw,
-  };
-}
-
-function optionalNullableString(
-  record: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = record[key];
-  if (value === undefined || value === null) return null;
-  if (typeof value === "string") return value;
-  throw new HttpError(400, "invalid_task_spec", `${key} must be string`);
 }

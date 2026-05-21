@@ -27,6 +27,9 @@ AI should handle:
 setup-canvas-agent-skills
   -> repo rules: issue tracker, artifacts, quality gates, worker model, review policy
 
+zen-engineering
+  -> top-level entrypoint for choosing the smallest suitable workflow
+
 architecture-canvas
   -> align-with-canvas
   -> canvas-to-prd
@@ -42,6 +45,7 @@ architecture-canvas
 
 ## Skills
 
+- `zen-engineering` — top-level entrypoint for Albert Zen's Canvas-driven engineering workflow.
 - `architecture-canvas` — build a shared architecture canvas for understanding and design judgment.
 - `setup-canvas-agent-skills` — bootstrap repo rules for issue tracker, artifact paths, quality gates, worker model, and review policy.
 - `align-with-canvas` — externalize the AI's system model, problems, consequences, options, and recommendations.

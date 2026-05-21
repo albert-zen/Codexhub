@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zen Engineering Skills"
+  short_description: "Albert Zen's Canvas-to-implementation workflow"
+  default_prompt: "Use zen-engineering to turn a rough software idea into a shared Canvas, PRD, issue DAG, AFK implementation plan, and review loop."

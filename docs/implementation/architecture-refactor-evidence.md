@@ -1,5 +1,87 @@
 # Architecture Refactor Evidence
 
+## AR-04 State Substrate Split, Slices 1-2
+
+Date: 2026-05-21
+
+Scope: extracted repository row mapping and small SQL helpers from
+`apps/server/src/repository.ts` into `apps/server/src/repository-sql.ts`, then
+extracted the raw Codex item/event log boundary into
+`apps/server/src/state-raw-item-log.ts`. `HubRepository` remains the public
+compatibility facade and delegates raw item methods to the new store.
+
+### Implementation Decisions
+
+- Added `repository-sql.ts` as the shared home for id/time helpers, JSON
+  encoding, pagination/cursor helpers, SQL placeholder generation, uniqueness,
+  transcript unit source checks, and all SQLite row-to-domain mapping.
+- Added `state-raw-item-log.ts` as the behavior-bearing store for
+  `appendItem`, `listItems`, `getItem`, `latestItem`, and
+  `latestCompletedAgentMessage`.
+- Kept `appendItem` append-first behavior, per-session monotonic
+  `last_item_sequence`, lossless raw JSON storage, and latest completed
+  agent-message session projection update semantics unchanged.
+- Kept `HubRepository` method signatures, route-facing contracts, SQL schema,
+  projection reads, review/run group behavior, and session reference resolution
+  unchanged.
+- Deferred product-record, derived-projection, and collaboration/review store
+  extraction to later slices. This keeps AR-04 reviewable while creating one
+  real state-substrate boundary.
+- No SQLite schema, migration, API route, CLI/GUI contract, pagination default,
+  or cursor semantic changes were introduced.
+
+### Responsibility Map
+
+- Old `repository.ts` local helpers `id`, `isoNow`, `encodeJson`,
+  `clampLimit`, `parseCursor`, `placeholders`, `unique`, and
+  `requiredUnitSourceId` now live in `repository-sql.ts`.
+- Old `repository.ts` row mappers for projects, workspaces, run groups,
+  sessions, task specs, messages, raw items, transcript units, review gate
+  statuses, run group dashboard summaries, and review findings now live in
+  `repository-sql.ts`.
+- Old `repository.ts` raw item/event-log behavior now lives in
+  `state-raw-item-log.ts`: raw payload classification and insert,
+  `last_item_sequence` updates, latest completed agent-message projection
+  updates on `worker_sessions`, item pagination, direct item lookup, latest item
+  lookup, and latest completed agent-message lookup.
+- `repository.ts` still owns product record writes/reads, derived transcript
+  projection queries, review metadata, run-group dashboards, and session
+  reference resolution. These are the next extraction candidates.
+
+### Validation
+
+- `pnpm --filter @codexhub/core build`
+  Passed.
+- `pnpm --filter @codexhub/server test -- repository-characterization.test.ts`
+  Passed: 1 file, 1 test.
+- `pnpm --filter @codexhub/server test`
+  Passed: 9 files, 62 tests.
+- `pnpm --filter @codexhub/server check`
+  Passed.
+- `git diff --check`
+  Passed.
+
+### Issues And Follow-Ups
+
+- Dogfood friction: `session start --file docs/...` resolved the relative path
+  from `apps/cli`, so AR-04 startup required an absolute path. GitHub issue #48
+  tracks this.
+- Dogfood note: `task_spec.raw` was null in the started session because the
+  command used `--file` rather than `--task-spec-file`; the task text still
+  reached the worker as the initial prompt, but the structured task-spec raw
+  field was not populated.
+- Follow-up: extract the derived transcript/run-group projection reads next,
+  while keeping `HubRepository` as the compatibility facade and preserving
+  pagination/grouping behavior.
+
+### Documentation Impact
+
+This evidence document is the required AR-04 slice documentation update.
+README, AGENTS, roadmap, review-gate, CLI, GUI, and schema documentation did
+not need changes because these slices only moved internal repository helpers
+and raw item-log behavior without changing operator workflow or external
+contracts.
+
 ## AR-03 Runtime Protocol Adapter
 
 Date: 2026-05-21

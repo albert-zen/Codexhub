@@ -1,7 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import {
-  classifyCodexPayload,
   type Item,
   type ItemType,
   type MessageMode,
@@ -21,6 +19,29 @@ import {
   buildTranscriptEntries,
   projectTranscriptEntries,
 } from "@codexhub/core";
+import {
+  clampLimit,
+  encodeJson,
+  id,
+  isoNow,
+  itemFromRow,
+  messageFromRow,
+  parseCursor,
+  placeholders,
+  projectFromRow,
+  recentTranscriptUnitFromRow,
+  requiredUnitSourceId,
+  reviewFindingFromRow,
+  reviewGateStatusFromRow,
+  runGroupFromRow,
+  runGroupSessionSummaryFromRow,
+  sessionFromRow,
+  taskSpecFromRow,
+  type RecentTranscriptUnit,
+  unique,
+  workspaceFromRow,
+} from "./repository-sql.js";
+import { RawItemLogStore } from "./state-raw-item-log.js";
 
 export interface CreateProjectInput {
   name: string;
@@ -121,16 +142,6 @@ export interface SessionListOptions {
   cursor?: string | null;
 }
 
-type TranscriptUnitSource = "message" | "agent" | "item";
-
-interface RecentTranscriptUnit {
-  unit_source: TranscriptUnitSource;
-  entry_id: string;
-  codex_item_id: string | null;
-  source_id: string | null;
-  transcript_sequence: number;
-}
-
 export type SessionResolution =
   | { status: "found"; session: WorkerSession }
   | { status: "not_found"; reference: string }
@@ -147,7 +158,11 @@ const UNAVAILABLE_TRANSIENT_FAILURE_REASON =
   "Server restarted without a live Codex app-server process; session cannot be continued in this server process. Start a follow-up session.";
 
 export class HubRepository {
-  constructor(private readonly db: DatabaseSync) {}
+  private readonly rawItems: RawItemLogStore;
+
+  constructor(private readonly db: DatabaseSync) {
+    this.rawItems = new RawItemLogStore(db);
+  }
 
   createProject(input: CreateProjectInput): Project {
     const now = isoNow();
@@ -928,76 +943,7 @@ export class HubRepository {
   }
 
   appendItem(sessionId: string, payload: unknown): Item {
-    const session = this.requireSession(sessionId);
-    const sequence = session.last_item_sequence + 1;
-    const classification = classifyCodexPayload(payload);
-    const now = isoNow();
-    const item: Item = {
-      id: id("item"),
-      session_id: sessionId,
-      sequence,
-      type: classification.type,
-      codex_method: classification.method,
-      codex_item_id: classification.codexItemId,
-      codex_item_type: classification.codexItemType,
-      created_at: now,
-      raw_payload: payload,
-      text_excerpt: classification.textExcerpt,
-    };
-
-    this.db
-      .prepare(
-        `INSERT INTO items (
-          id, session_id, sequence, type, codex_method, codex_item_id,
-          codex_item_type, created_at, raw_payload_json, text_excerpt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        item.id,
-        item.session_id,
-        item.sequence,
-        item.type,
-        item.codex_method,
-        item.codex_item_id,
-        item.codex_item_type,
-        item.created_at,
-        encodeJson(item.raw_payload) ?? "null",
-        item.text_excerpt,
-      );
-
-    const completedAgentMessage =
-      item.type === "agentmessage" &&
-      item.codex_method === "item/completed" &&
-      item.text_excerpt &&
-      item.text_excerpt.trim() !== ""
-        ? item
-        : null;
-
-    if (completedAgentMessage) {
-      this.db
-        .prepare(
-          `UPDATE worker_sessions
-           SET last_item_sequence = ?, last_agent_message_item_id = ?,
-               last_agent_message = ?, last_agent_message_at = ?, updated_at = ?
-           WHERE id = ?`,
-        )
-        .run(
-          item.sequence,
-          completedAgentMessage.id,
-          completedAgentMessage.text_excerpt,
-          completedAgentMessage.created_at,
-          now,
-          sessionId,
-        );
-    } else {
-      this.db
-        .prepare(
-          "UPDATE worker_sessions SET last_item_sequence = ?, updated_at = ? WHERE id = ?",
-        )
-        .run(item.sequence, now, sessionId);
-    }
-
-    return item;
+    return this.rawItems.appendItem(sessionId, payload);
   }
 
   listItems(
@@ -1008,97 +954,22 @@ export class HubRepository {
     next_cursor: string | null;
     limit: number;
   } {
-    const limit = clampLimit(options.limit, 20, 200);
-    const after = options.after ?? 0;
-    const before = options.before;
-    const type = options.type ?? "agentmessage";
-    const noTypeFilter = type === "all";
-
-    if (options.recent && after === 0 && before === undefined) {
-      const sql = noTypeFilter
-        ? `SELECT * FROM items WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`
-        : `SELECT * FROM items WHERE session_id = ? AND type = ? ORDER BY sequence DESC LIMIT ?`;
-      const rows = noTypeFilter
-        ? this.db.prepare(sql).all(sessionId, limit + 1)
-        : this.db.prepare(sql).all(sessionId, type, limit + 1);
-      const items = rows
-        .map(itemFromRow)
-        .slice(0, limit)
-        .sort((left, right) => left.sequence - right.sequence);
-      return {
-        items,
-        limit,
-        next_cursor: null,
-      };
-    }
-
-    const where = ["session_id = ?", "sequence > ?"];
-    const values: Array<string | number> = [sessionId, after];
-    if (!noTypeFilter) {
-      where.push("type = ?");
-      values.push(type);
-    }
-    if (before !== undefined && before !== null) {
-      where.push("sequence < ?");
-      values.push(before);
-    }
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM items WHERE ${where.join(" AND ")}
-         ORDER BY sequence ASC LIMIT ?`,
-      )
-      .all(...values, limit + 1);
-    const items = rows.map(itemFromRow).slice(0, limit);
-    const extra = rows.length > limit;
-    return {
-      items,
-      limit,
-      next_cursor:
-        extra && items.length > 0
-          ? String(items[items.length - 1]?.sequence)
-          : null,
-    };
+    return this.rawItems.listItems(sessionId, options);
   }
 
   getItem(id: string): Item | null {
-    const row = this.db
-      .prepare("SELECT * FROM items WHERE id = ? LIMIT 1")
-      .get(id);
-    return row ? itemFromRow(row) : null;
+    return this.rawItems.getItem(id);
   }
 
   latestItem(
     sessionId: string,
     type: ItemType | "all" = "agentmessage",
   ): Item | null {
-    const noTypeFilter = type === "all";
-    const row = noTypeFilter
-      ? this.db
-          .prepare(
-            "SELECT * FROM items WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
-          )
-          .get(sessionId)
-      : this.db
-          .prepare(
-            "SELECT * FROM items WHERE session_id = ? AND type = ? ORDER BY sequence DESC LIMIT 1",
-          )
-          .get(sessionId, type);
-    return row ? itemFromRow(row) : null;
+    return this.rawItems.latestItem(sessionId, type);
   }
 
   latestCompletedAgentMessage(sessionId: string): Item | null {
-    const row = this.db
-      .prepare(
-        `SELECT * FROM items
-         WHERE session_id = ?
-           AND type = 'agentmessage'
-           AND codex_method = 'item/completed'
-           AND text_excerpt IS NOT NULL
-           AND trim(text_excerpt) <> ''
-         ORDER BY sequence DESC LIMIT 1`,
-      )
-      .get(sessionId);
-    return row ? itemFromRow(row) : null;
+    return this.rawItems.latestCompletedAgentMessage(sessionId);
   }
 
   listTranscript(
@@ -1399,338 +1270,4 @@ export class HubRepository {
     if (!row) throw new Error(`message not found: ${id}`);
     return messageFromRow(row);
   }
-}
-
-function id(prefix: string): string {
-  return `${prefix}_${randomUUID().replaceAll("-", "")}`;
-}
-
-function isoNow(): string {
-  return new Date().toISOString();
-}
-
-function encodeJson(value: unknown): string | null {
-  if (value === undefined || value === null) return null;
-  return JSON.stringify(value);
-}
-
-function parseJson(value: string | null): unknown | null {
-  if (!value) return null;
-  return JSON.parse(value);
-}
-
-function clampLimit(
-  value: number | undefined,
-  fallback: number,
-  max: number,
-): number {
-  if (!Number.isInteger(value) || value === undefined || value < 1)
-    return fallback;
-  return Math.min(value, max);
-}
-
-function parseCursor(value: string | null | undefined): number {
-  if (!value) return 0;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function placeholders(values: unknown[]): string {
-  return values.map(() => "?").join(", ");
-}
-
-function unique<T>(values: readonly T[]): T[] {
-  return [...new Set(values)];
-}
-
-function requiredUnitSourceId(unit: RecentTranscriptUnit): string {
-  if (unit.source_id === null) {
-    throw new Error(`missing source id for transcript unit ${unit.entry_id}`);
-  }
-  return unit.source_id;
-}
-
-function projectFromRow(row: unknown): Project {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    name: requiredString(record, "name"),
-    default_repo_url: string(record, "default_repo_url"),
-    default_workspace_root: string(record, "default_workspace_root"),
-    default_cwd: string(record, "default_cwd"),
-    default_branch: string(record, "default_branch"),
-    default_codex_options: parseJson(
-      string(record, "default_codex_options_json"),
-    ),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function workspaceFromRow(row: unknown): Workspace {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    project_id: requiredString(record, "project_id"),
-    source_type: requiredString(
-      record,
-      "source_type",
-    ) as Workspace["source_type"],
-    repo_url: string(record, "repo_url"),
-    path: requiredString(record, "path"),
-    cwd: requiredString(record, "cwd"),
-    branch: string(record, "branch"),
-    commit_sha: string(record, "commit_sha"),
-    status: requiredString(record, "status") as Workspace["status"],
-    last_error: string(record, "last_error"),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function runGroupFromRow(row: unknown): RunGroup {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    project_id: string(record, "project_id"),
-    name: requiredString(record, "name"),
-    purpose: string(record, "purpose"),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function sessionFromRow(row: unknown): WorkerSession {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    project_id: requiredString(record, "project_id"),
-    workspace_id: requiredString(record, "workspace_id"),
-    previous_session_id: string(record, "previous_session_id"),
-    status: requiredString(record, "status") as WorkerSession["status"],
-    codex_thread_id: string(record, "codex_thread_id"),
-    codex_turn_id: string(record, "codex_turn_id"),
-    codex_session_key: string(record, "codex_session_key"),
-    process_pid: string(record, "process_pid"),
-    last_agent_message_item_id: string(record, "last_agent_message_item_id"),
-    last_agent_message: string(record, "last_agent_message"),
-    last_agent_message_at: string(record, "last_agent_message_at"),
-    last_item_sequence: number(record, "last_item_sequence"),
-    failure_reason: string(record, "failure_reason"),
-    started_at: string(record, "started_at"),
-    ended_at: string(record, "ended_at"),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function taskSpecFromRow(row: unknown): TaskSpecMetadata {
-  const record = asRow(row);
-  return {
-    session_id: requiredString(record, "session_id"),
-    ref: string(record, "ref"),
-    title: string(record, "title"),
-    intent: string(record, "intent"),
-    scope: string(record, "scope"),
-    acceptance_criteria: string(record, "acceptance_criteria"),
-    raw: string(record, "raw"),
-    created_at: requiredString(record, "created_at"),
-  };
-}
-
-function itemFromRow(row: unknown): import("@codexhub/core").Item {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    session_id: requiredString(record, "session_id"),
-    sequence: number(record, "sequence"),
-    type: requiredString(record, "type") as ItemType,
-    codex_method: string(record, "codex_method"),
-    codex_item_id: string(record, "codex_item_id"),
-    codex_item_type: string(record, "codex_item_type"),
-    created_at: requiredString(record, "created_at"),
-    raw_payload: JSON.parse(requiredString(record, "raw_payload_json")),
-    text_excerpt: string(record, "text_excerpt"),
-  };
-}
-
-function messageFromRow(row: unknown): import("@codexhub/core").Message {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    session_id: requiredString(record, "session_id"),
-    mode: requiredString(record, "mode") as MessageMode,
-    content: requiredString(record, "content"),
-    sender_type: requiredString(record, "sender_type") as SenderType,
-    sender_id: string(record, "sender_id"),
-    status: requiredString(
-      record,
-      "status",
-    ) as import("@codexhub/core").MessageStatus,
-    codex_request_id: string(record, "codex_request_id"),
-    error: string(record, "error"),
-    created_at: requiredString(record, "created_at"),
-    sent_at: string(record, "sent_at"),
-  };
-}
-
-function recentTranscriptUnitFromRow(row: unknown): RecentTranscriptUnit {
-  const record = asRow(row);
-  const unitSource = requiredString(record, "unit_source");
-  if (
-    unitSource !== "message" &&
-    unitSource !== "agent" &&
-    unitSource !== "item"
-  ) {
-    throw new Error(`invalid transcript unit source: ${unitSource}`);
-  }
-
-  return {
-    unit_source: unitSource,
-    entry_id: requiredString(record, "entry_id"),
-    codex_item_id: string(record, "codex_item_id"),
-    source_id: string(record, "source_id"),
-    transcript_sequence: number(record, "transcript_sequence"),
-  };
-}
-
-function reviewGateStatusFromRow(row: unknown): ReviewGateStatus {
-  const record = asRow(row);
-  return {
-    session_id: requiredString(record, "session_id"),
-    implementation_done: boolean(record, "implementation_done"),
-    self_validation_done: boolean(record, "self_validation_done"),
-    review_requested: boolean(record, "review_requested"),
-    review_addressed: boolean(record, "review_addressed"),
-    ready_for_human_review: boolean(record, "ready_for_human_review"),
-    note: string(record, "note"),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function runGroupSessionSummaryFromRow(row: unknown): RunGroupSessionSummary {
-  const session = sessionFromRow(row);
-  const reviewStatus = reviewGateStatusFromSummaryRow(row, session);
-  const reviewFindingCount = number(asRow(row), "review_finding_count");
-  const openReviewFindingCount = number(
-    asRow(row),
-    "open_review_finding_count",
-  );
-  const attentionReasons = runGroupAttentionReasons(
-    session,
-    reviewStatus,
-    openReviewFindingCount,
-  );
-  return {
-    session,
-    review_status: reviewStatus,
-    review_finding_count: reviewFindingCount,
-    open_review_finding_count: openReviewFindingCount,
-    attention_required: attentionReasons.length > 0,
-    attention_reasons: attentionReasons,
-  };
-}
-
-function reviewGateStatusFromSummaryRow(
-  row: unknown,
-  session: WorkerSession,
-): ReviewGateStatus {
-  const record = asRow(row);
-  if (typeof record.review_status_session_id !== "string") {
-    return {
-      session_id: session.id,
-      implementation_done: false,
-      self_validation_done: false,
-      review_requested: false,
-      review_addressed: false,
-      ready_for_human_review: false,
-      note: null,
-      created_at: session.created_at,
-      updated_at: session.updated_at,
-    };
-  }
-
-  return {
-    session_id: requiredString(record, "review_status_session_id"),
-    implementation_done: prefixedBoolean(record, "review_implementation_done"),
-    self_validation_done: prefixedBoolean(
-      record,
-      "review_self_validation_done",
-    ),
-    review_requested: prefixedBoolean(record, "review_requested"),
-    review_addressed: prefixedBoolean(record, "review_addressed"),
-    ready_for_human_review: prefixedBoolean(
-      record,
-      "review_ready_for_human_review",
-    ),
-    note: string(record, "review_note"),
-    created_at: requiredString(record, "review_created_at"),
-    updated_at: requiredString(record, "review_updated_at"),
-  };
-}
-
-function runGroupAttentionReasons(
-  session: WorkerSession,
-  reviewStatus: ReviewGateStatus,
-  openReviewFindingCount: number,
-): RunGroupSessionSummary["attention_reasons"] {
-  const reasons: RunGroupSessionSummary["attention_reasons"] = [];
-  if (session.status === "failed") reasons.push("failed");
-  if (session.status === "awaiting_input") reasons.push("awaiting_input");
-  if (
-    (reviewStatus.review_requested || reviewStatus.ready_for_human_review) &&
-    !reviewStatus.review_addressed
-  ) {
-    reasons.push("review_needed");
-  }
-  if (openReviewFindingCount > 0) reasons.push("open_review_findings");
-  return reasons;
-}
-
-function reviewFindingFromRow(row: unknown): ReviewFinding {
-  const record = asRow(row);
-  return {
-    id: requiredString(record, "id"),
-    session_id: requiredString(record, "session_id"),
-    reviewer_session_id: string(record, "reviewer_session_id"),
-    severity: requiredString(record, "severity") as ReviewFindingSeverity,
-    status: requiredString(record, "status") as ReviewFindingStatus,
-    summary: requiredString(record, "summary"),
-    details: string(record, "details"),
-    worker_response: string(record, "worker_response"),
-    created_at: requiredString(record, "created_at"),
-    updated_at: requiredString(record, "updated_at"),
-  };
-}
-
-function asRow(row: unknown): Record<string, unknown> {
-  if (row && typeof row === "object" && !Array.isArray(row))
-    return row as Record<string, unknown>;
-  throw new Error("invalid database row");
-}
-
-function requiredString(row: Record<string, unknown>, key: string): string {
-  const value = row[key];
-  if (typeof value === "string") return value;
-  throw new Error(`database field ${key} is not a string`);
-}
-
-function string(row: Record<string, unknown>, key: string): string | null {
-  const value = row[key];
-  return typeof value === "string" ? value : null;
-}
-
-function number(row: Record<string, unknown>, key: string): number {
-  const value = row[key];
-  if (typeof value === "number") return value;
-  throw new Error(`database field ${key} is not a number`);
-}
-
-function boolean(row: Record<string, unknown>, key: string): boolean {
-  return number(row, key) === 1;
-}
-
-function prefixedBoolean(row: Record<string, unknown>, key: string): boolean {
-  return number(row, key) === 1;
 }

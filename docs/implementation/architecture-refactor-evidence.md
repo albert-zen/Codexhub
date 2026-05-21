@@ -113,6 +113,10 @@ Protected behavior from `docs/prd/architecture-refactor.md`:
   rules are covered, and runtime rejects invalid sends, but the exact HTTP
   contract for non-terminal wrong-mode sends should be made explicit before
   route logic moves.
+- Dogfood issue recorded: GitHub issue
+  [#44](https://github.com/albert-zen/Codexhub/issues/44) tracks the missing
+  CLI `session complete` command and contradictory `completed` session response
+  with a stale `failure_reason`.
 
 ### Documentation Impact
 

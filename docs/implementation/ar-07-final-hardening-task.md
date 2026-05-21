@@ -79,7 +79,7 @@ Run the broad final checks first:
 
 ```powershell
 pnpm quality
-pnpm smoke:dogfood -- --mode fake
+pnpm smoke:dogfood -- --fake
 ```
 
 If a broad command fails, run the narrowest package command needed to isolate
@@ -88,7 +88,7 @@ the failure, then either fix a regression in scope or record a follow-up issue.
 ## Validation
 
 - `pnpm quality`
-- `pnpm smoke:dogfood -- --mode fake`
+- `pnpm smoke:dogfood -- --fake`
 - `git diff --check`
 - Read-only review against this task spec and `docs/review-gate.md`
 

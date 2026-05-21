@@ -10,14 +10,14 @@ The first usable loop now exists:
 create project/workspace -> start session -> save raw items -> read latest
 agentmessage -> list filtered items -> send steer/continue -> inspect in GUI.
 
-The current product step is runtime durability after the first orchestration
-metadata pass. Worktree workspaces, task spec metadata, run groups,
-review-gate status, terminal-session follow-up, structured review findings,
-short session id resolution, chat-style session detail, run group dashboards,
-and fake-mode dogfood smoke now exist as first-pass control plane records. The
-remaining first-stage hardening gap is a durable Codex runtime/supervisor
-boundary that can survive HTTP server reloads without pretending orphaned
-sessions are still live.
+The current product step is integration hardening after the first orchestration
+and runtime-supervisor passes. Worktree workspaces, task spec metadata, run
+groups, review-gate status, terminal-session follow-up, structured review
+findings, short session id resolution, chat-style session detail, run group
+dashboards, fake-mode dogfood smoke, and opt-in external runtime supervisor
+mode now exist as first-pass control plane records. The remaining durability
+limit is supervisor-process loss or host restart: Codexhub still fails closed
+unless the configured runtime can prove a persisted session is live.
 
 ## V1 Outcome
 
@@ -58,21 +58,22 @@ The repository currently contains:
 - Top-level `pnpm build`, `pnpm check`, `pnpm test`, and `pnpm format` scripts
   all pass.
 
-Issues `#1` through `#39` are closed and represent the implemented baseline for
+Issues `#1` through `#40` are closed and represent the implemented baseline for
 payload fixtures, restart reconciliation, CLI smoke coverage, API route policy,
 README loop docs, workspace cleanup/worktrees, web item-window pagination,
 task spec metadata, minimal run groups, CI warning cleanup, review-gate status
 metadata, conversation transcript projection, GUI creation/follow-up,
 terminal-session follow-up, structured review findings, worktree sandbox
 hardening, short session ids, stable latest-agent-message projection, and
-chat-style session detail.
+chat-style session detail, plus opt-in runtime-supervisor ownership across API
+reloads.
 
 The following work remains open next:
 
-- Introduce a real runtime/supervisor boundary so continuable sessions can
-  survive HTTP server hot reloads when the underlying worker runtime is still
-  alive (`#40`).
 - Continue tuning dogfood smoke output as real runs reveal new friction.
+- Track narrower architecture-refactor follow-ups from
+  `docs/implementation/architecture-refactor-evidence.md` in GitHub rather than
+  reopening broad first-stage epics.
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
 GitHub issue tracker is the execution source of truth.

@@ -1,5 +1,170 @@
 # Architecture Refactor Evidence
 
+## AR-07 Integration Hardening And Documentation Sync
+
+Date: 2026-05-21
+
+Scope: ran the final integration gate for AR-01 through AR-06, exercised the
+CI-safe fake dogfood smoke path, audited documentation sources from
+`docs/documentation-system.md`, synchronized stale roadmap/backlog claims, and
+prepared the final review packet for the architecture refactor.
+
+### Validation
+
+- `pnpm quality`
+  Passed. The command ran `pnpm format`, `pnpm lint`, `pnpm check`,
+  `pnpm test`, and `pnpm build`. Package results included core tests
+  (8 files, 36 tests), server tests (9 files, 62 tests), CLI tests (2 files,
+  36 tests), web tests (4 files, 13 tests), and successful core/server/CLI/web
+  builds.
+- `pnpm smoke:dogfood -- --mode fake`
+  Initially exited 1 before exercising the smoke path with
+  `unknown option: --mode`. The initial AR-07 task spec draft used
+  `--mode fake`, but the existing smoke interface is `--fake`; `--mode` is not
+  a supported flag. This was treated as a task-spec command correction, not a
+  product regression, and no smoke parser or test code was changed.
+- `pnpm smoke:dogfood -- --fake`
+  Passed. The fake smoke created a temporary API server, project, run group,
+  workspaces, initial sessions, a continue turn, and a terminal-session
+  follow-up. Result: `Codexhub dogfood smoke: ok`, mode `fake`, four sessions
+  observed, artifacts removed after run, and `Friction: none discovered`.
+- `pnpm format`
+  Passed after the documentation edits.
+- `git diff --check`
+  Passed.
+
+### Documentation Audit
+
+Source list audited from `docs/documentation-system.md`:
+
+- `README.md`: current for install/run usage, CLI examples, runtime supervisor,
+  dogfood smoke, API routes, and non-goals. No change needed.
+- `AGENTS.md`: current for package boundaries, product boundaries, quality
+  gates, Git rules, and documentation gate. No change needed.
+- `docs/roadmap.md`: stale claim found that `#40` was the remaining open
+  runtime-supervisor boundary. Updated to record the first-pass opt-in external
+  supervisor baseline and the remaining supervisor-process-loss durability
+  limit.
+- `docs/symphony-lessons.md`: current for imported/rejected assumptions. No
+  change needed.
+- `docs/subagent-ops-log.md`: current for reusable worker/reviewer and
+  runtime-boundary lessons, including `#40`. No new fake-smoke friction was
+  found, so no change needed.
+- `docs/github-issues.md`: stale claim found that `#40` was the only open
+  first-stage hardening issue. Updated to treat `#40` as closed baseline and to
+  name architecture-refactor follow-ups already tracked in GitHub.
+- `docs/agents/`: current for Canvas workflow artifact paths, domain sources,
+  issue tracking, quality gates, worker model, and review policy. No change
+  needed.
+- `docs/task-spec-template.md`: current for task spec shape. No change needed.
+- `docs/review-gate.md`: current for read-only review workflow, checklist, and
+  worker response format. No change needed.
+- `docs/runtime-supervisor.md`: current for opt-in supervisor behavior,
+  fail-closed restart semantics, unavailable-process fallback, and limits. No
+  change needed.
+- `.github/ISSUE_TEMPLATE/task_spec.yml`: current for GitHub task spec fields.
+  No change needed.
+- `.github/pull_request_template.md`: current for task spec, quality gate, and
+  review subagent checklist. No change needed.
+- `skills/SKILLSET.md`: current for repo-local Canvas workflow skill index. No
+  change needed.
+- `skills/codexhub/SKILL.md`: current for Codexhub control-plane usage,
+  bounded reads, explicit send modes, follow-up sessions, and product
+  boundaries. No change needed.
+
+### Documentation Impact
+
+Docs changed:
+
+- `docs/implementation/architecture-refactor-evidence.md`
+- `docs/roadmap.md`
+- `docs/github-issues.md`
+
+The roadmap and local backlog synthesis changed because the audit found stale
+public workflow/product-baseline claims around issue `#40`. README, AGENTS,
+runtime supervisor docs, review gate docs, task spec templates, Canvas workflow
+docs, and repo-local skills did not need updates because AR-07 changed no API,
+CLI, GUI, SQLite schema, runtime behavior, workflow rule, or quality gate.
+
+### Review Packet
+
+References:
+
+- Canvas: `docs/architecture/CANVAS.md`
+- PRD: `docs/prd/architecture-refactor.md`
+- DAG: `docs/implementation/architecture-refactor-dag.md`
+- Evidence: `docs/implementation/architecture-refactor-evidence.md`
+
+Changed implementation areas from AR-01 through AR-06:
+
+- `packages/core`: characterization coverage and shared session presentation
+  helper for action availability.
+- `apps/server`: Product Manager module, Codex App Server adapter, repository
+  SQL/helper extraction, raw item-log store extraction, and related tests.
+- `apps/cli`: audited for duplicated session action rules; no AR-06 CLI code
+  change was needed.
+- `apps/web`: GUI action availability now consumes the shared core
+  presentation helper; redundant compatibility wrapper removed.
+- `docs/implementation/architecture-refactor-evidence.md`: slice-by-slice
+  decisions, validation, compatibility notes, and follow-ups.
+- `docs/roadmap.md` and `docs/github-issues.md`: AR-07 documentation sync for
+  runtime-supervisor baseline and tracked follow-ups.
+
+Validation packet:
+
+- Root quality gate passed with format, lint, typecheck, tests, and build.
+- Fake dogfood smoke passed through the existing `--fake` interface with no
+  friction reported.
+- Documentation audit completed against every source named by
+  `docs/documentation-system.md`.
+- `git diff --check` passed after documentation edits.
+
+Open risks and tracked follow-ups:
+
+- `#44` tracks missing CLI `session complete` command and contradictory
+  completed-session response with stale `failure_reason`.
+- `#45` tracks residual wrong-mode send API contract characterization risk.
+- `#46` tracks self-dogfood session orphaning from API runtime ownership loss.
+- `#47` tracks linked-worktree Git commit/amend sandbox friction.
+- `#48` tracks CLI `session start --file` relative-path resolution friction.
+- Remaining runtime durability after supervisor-process loss remains outside
+  this refactor and is documented as a limit in `docs/runtime-supervisor.md` and
+  `docs/github-issues.md`.
+
+No new Codexhub dogfood friction was discovered during AR-07 fake smoke.
+
+### Read-Only Review
+
+Review inputs: AR-07 task spec, `docs/review-gate.md`, changed-file list,
+documentation diff, and validation results.
+
+Spec review findings:
+
+- Finding: The task spec command used `pnpm smoke:dogfood -- --mode fake`, but
+  the existing smoke interface is `--fake`.
+  Response: Accepted as a task-spec command correction. Reverted all attempted
+  smoke parser/test edits, corrected `ar-07-final-hardening-task.md`, reran
+  `pnpm smoke:dogfood -- --fake`, and recorded the correction in this evidence
+  section.
+- Finding: AR-07 must not broaden the refactor beyond final hardening.
+  Response: Accepted. Final diff is documentation-only; no API, CLI, GUI,
+  runtime, repository, schema, or smoke parser behavior changed.
+
+Standards review findings:
+
+- Finding: Documentation audit must use `docs/documentation-system.md` as the
+  source of truth and name audited docs.
+  Response: Accepted. The audit list above names every source from that file
+  and records which docs changed.
+- Finding: Remaining risks must have concrete issue ownership or documented
+  limits.
+  Response: Accepted. Existing follow-ups `#44`, `#45`, `#46`, `#47`, and
+  `#48` are named, and the remaining supervisor-process-loss durability limit
+  is documented.
+
+Reviewer conclusion: No blocking AR-07 findings remain after the command
+correction, documentation sync, and validation reruns.
+
 ## AR-06 CLI / GUI Presentation Alignment
 
 Date: 2026-05-21

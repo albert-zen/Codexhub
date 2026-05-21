@@ -45,12 +45,15 @@ Closed implementation areas:
 - Run group dashboard for bounded batch progress, latest messages, review state,
   and attention indicators (`#26`).
 - CI-safe fake dogfood smoke script with explicit real Codex opt-in (`#27`).
+- Runtime-supervisor ownership across API server reloads with fail-closed
+  fallback when the configured runtime cannot prove a session is live (`#40`).
 
 The important boundary after these closures: Codexhub has first-pass metadata
 for task specs, worktrees, run groups, review status, terminal-session
-follow-up, run group dashboards, and fake-mode dogfood automation. It does not
-yet have the full orchestration UX around web creation/follow-up flows or
-ownership conflict display.
+follow-up, run group dashboards, fake-mode dogfood automation, and opt-in
+external runtime-supervisor mode. It does not have durable recovery after the
+supervisor process exits, the host reboots, or process ownership is otherwise
+lost.
 
 ## Backlog Guardrails
 
@@ -65,20 +68,19 @@ ownership conflict display.
 
 ## Current Backlog
 
-GitHub currently has one open first-stage hardening issue: `#40`. Issues
-`#19` through `#39` are closed and represent implemented baseline unless a later
+No broad first-stage hardening issue is open in this local synthesis. Issues
+`#19` through `#40` are closed and represent implemented baseline unless a later
 dogfood run opens a narrower regression or UX follow-up.
 
-1. `#40 feat(runtime): keep worker sessions continuable across server hot reloads`
-   - Move Codex `app-server` child-process ownership and stdio handles out of
-     the hot-reloading HTTP server, or add an equally explicit supervisor
-     boundary.
-   - Let the HTTP server prove a persisted session id maps to a live supervised
-     Codex runtime before accepting `steer` or `continue`.
-   - Keep startup reconciliation conservative for any session the supervisor
-     cannot prove is attached and healthy.
-   - Preserve the current structured `session_process_unavailable` plus
-     follow-up-session fallback for unrecoverable orphan sessions.
+Architecture-refactor evidence currently points to narrower follow-ups already
+tracked in GitHub:
+
+- `#44`: missing CLI `session complete` command and contradictory completed
+  session response with stale `failure_reason`.
+- `#45`: residual wrong-mode send API contract characterization risk.
+- `#46`: self-dogfood session orphaning from API runtime ownership loss.
+- `#47`: linked-worktree Git commit/amend sandbox friction.
+- `#48`: CLI `session start --file` relative-path resolution friction.
 
 ## Later Closed Follow-Ups
 
@@ -109,14 +111,11 @@ dogfood run opens a narrower regression or UX follow-up.
 
 ## Runtime Supervisor Follow-Up Draft
 
-The remaining durable-runtime work is a real supervisor boundary, not a larger
-HTTP-route patch:
+The remaining durable-runtime work is a future durable reattach boundary after
+supervisor-process loss, not a larger HTTP-route patch:
 
-- Move Codex `app-server` child-process ownership and stdio handles out of the
-  hot-reloading HTTP server.
-- Give the HTTP server an attach/lease protocol that can prove a persisted
-  session id maps to a live supervised Codex runtime before allowing `steer` or
-  `continue`.
+- Give the HTTP server and supervisor an attach/lease protocol that can recover
+  or prove live ownership after supervisor restart or host interruption.
 - Keep startup reconciliation conservative for any session the supervisor cannot
   prove is attached and healthy.
 - Preserve the current follow-up-session fallback for failed, stopped, completed,

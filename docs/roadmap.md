@@ -73,7 +73,9 @@ The following work remains open next:
 - Continue tuning dogfood smoke output as real runs reveal new friction.
 - Track narrower architecture-refactor follow-ups from
   `docs/implementation/architecture-refactor-evidence.md` in GitHub rather than
-  reopening broad first-stage epics.
+  reopening broad first-stage epics. Current refactor-depth follow-ups are
+  `#49` for deeper state-substrate extraction and `#50` for remaining
+  presentation helpers.
 
 First-stage priority order is tracked in `docs/github-issues.md`; the active
 GitHub issue tracker is the execution source of truth.

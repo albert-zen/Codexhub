@@ -81,6 +81,10 @@ tracked in GitHub:
 - `#46`: self-dogfood session orphaning from API runtime ownership loss.
 - `#47`: linked-worktree Git commit/amend sandbox friction.
 - `#48`: CLI `session start --file` relative-path resolution friction.
+- `#49`: deferred deeper repository/state-substrate split beyond the raw item
+  log.
+- `#50`: deferred presentation-helper scope beyond session action
+  availability.
 
 ## Later Closed Follow-Ups
 

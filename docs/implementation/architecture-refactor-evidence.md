@@ -76,6 +76,7 @@ Source list audited from `docs/documentation-system.md`:
 
 Docs changed:
 
+- `docs/implementation/ar-07-final-hardening-task.md`
 - `docs/implementation/architecture-refactor-evidence.md`
 - `docs/roadmap.md`
 - `docs/github-issues.md`
@@ -127,18 +128,23 @@ Open risks and tracked follow-ups:
 - `#46` tracks self-dogfood session orphaning from API runtime ownership loss.
 - `#47` tracks linked-worktree Git commit/amend sandbox friction.
 - `#48` tracks CLI `session start --file` relative-path resolution friction.
+- `#49` tracks the deferred deeper repository/state-substrate split for
+  product records, projection/read models, review/run-group projections, and
+  session resolution.
+- `#50` tracks the deferred presentation-helper scope for session detail,
+  latest-result, transcript-window, and run-group dashboard view rules.
 - Remaining runtime durability after supervisor-process loss remains outside
   this refactor and is documented as a limit in `docs/runtime-supervisor.md` and
   `docs/github-issues.md`.
 
 No new Codexhub dogfood friction was discovered during AR-07 fake smoke.
 
-### Read-Only Review
+### Read-Only Review Loop
 
 Review inputs: AR-07 task spec, `docs/review-gate.md`, changed-file list,
 documentation diff, and validation results.
 
-Spec review findings:
+Worker-context spec review findings:
 
 - Finding: The task spec command used `pnpm smoke:dogfood -- --mode fake`, but
   the existing smoke interface is `--fake`.
@@ -150,7 +156,7 @@ Spec review findings:
   Response: Accepted. Final diff is documentation-only; no API, CLI, GUI,
   runtime, repository, schema, or smoke parser behavior changed.
 
-Standards review findings:
+Worker-context standards review findings:
 
 - Finding: Documentation audit must use `docs/documentation-system.md` as the
   source of truth and name audited docs.
@@ -158,12 +164,35 @@ Standards review findings:
   and records which docs changed.
 - Finding: Remaining risks must have concrete issue ownership or documented
   limits.
-  Response: Accepted. Existing follow-ups `#44`, `#45`, `#46`, `#47`, and
-  `#48` are named, and the remaining supervisor-process-loss durability limit
-  is documented.
+  Response: Accepted. Existing follow-ups `#44`, `#45`, `#46`, `#47`, `#48`,
+  `#49`, and `#50` are named, and the remaining supervisor-process-loss
+  durability limit is documented.
 
-Reviewer conclusion: No blocking AR-07 findings remain after the command
-correction, documentation sync, and validation reruns.
+Clean-context review findings:
+
+- Finding: AR-04 evidence defers product-record, derived-projection,
+  collaboration/review, and session-resolution extraction, so the final handoff
+  must not present that deeper state-substrate scope as completed without a
+  tracked follow-up.
+  Response: Accepted. Created
+  [#49](https://github.com/albert-zen/Codexhub/issues/49) for the deeper
+  repository/state-substrate split and added it to the open risks list.
+- Finding: AR-05 evidence implements only session action availability while the
+  DAG also names session detail, latest result, transcript window metadata, and
+  run group dashboard summary helpers.
+  Response: Accepted. Created
+  [#50](https://github.com/albert-zen/Codexhub/issues/50) for the remaining
+  bounded presentation-helper scope and added it to the open risks list.
+- Finding: Documentation-impact evidence omitted
+  `docs/implementation/ar-07-final-hardening-task.md` even though the smoke
+  command correction changed that file.
+  Response: Accepted. Added the task spec to the docs-changed list and reran
+  formatting and whitespace checks.
+
+Reviewer conclusion: No untracked AR-07 findings remain after the smoke command
+correction, documentation sync, clean-context review, and follow-up issue
+creation. The remaining AR-04 and AR-05 depth work is explicitly tracked as
+follow-up scope in `#49` and `#50`.
 
 ## AR-06 CLI / GUI Presentation Alignment
 

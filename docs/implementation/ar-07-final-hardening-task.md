@@ -51,7 +51,7 @@ Likely files:
 
 - Root `pnpm quality` passes, or any failure is documented with command output,
   suspected cause, and a follow-up issue.
-- `pnpm smoke:dogfood -- --mode fake` runs after the combined refactor, or a
+- `pnpm smoke:dogfood -- --fake` runs after the combined refactor, or a
   concrete blocker is documented with a follow-up issue.
 - Documentation audit checks the source-of-truth list in
   `docs/documentation-system.md`.

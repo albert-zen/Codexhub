@@ -32,18 +32,28 @@
     <main class="mx-auto max-w-6xl space-y-10 px-6 py-10">
       <header class="space-y-5">
         <div class="space-y-2">
-          <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <p
+            class="text-xs font-semibold uppercase tracking-wider text-slate-500"
+          >
             Codexhub - architecture canvas - 2026-05-21
           </p>
           <h1 class="text-4xl font-semibold tracking-normal text-slate-950">
             Align Codexhub around the Codex App Server
           </h1>
         </div>
-        <div class="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700 md:grid-cols-4">
+        <div
+          class="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-700 md:grid-cols-4"
+        >
           <div><strong>Module</strong>: interface plus implementation.</div>
-          <div><strong>Seam</strong>: where behavior can change by adapter.</div>
-          <div><strong>Adapter</strong>: concrete implementation at a seam.</div>
-          <div><strong>Deep</strong>: small interface, large hidden behavior.</div>
+          <div>
+            <strong>Seam</strong>: where behavior can change by adapter.
+          </div>
+          <div>
+            <strong>Adapter</strong>: concrete implementation at a seam.
+          </div>
+          <div>
+            <strong>Deep</strong>: small interface, large hidden behavior.
+          </div>
         </div>
       </header>
 
@@ -58,24 +68,30 @@
         </p>
       </section>
 
-      <section id="system-goal" class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        id="system-goal"
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <h2 class="text-2xl font-semibold">System Goal</h2>
         <p class="mt-3 max-w-4xl text-sm leading-6 text-slate-700">
-          Codexhub gives a human operator or manager agent a durable, low-context
-          surface for starting Codex workers, observing progress, sending
-          follow-up instructions, grouping runs, and reviewing outcomes without
-          replaying a full Codex thread into context.
+          Codexhub gives a human operator or manager agent a durable,
+          low-context surface for starting Codex workers, observing progress,
+          sending follow-up instructions, grouping runs, and reviewing outcomes
+          without replaying a full Codex thread into context.
         </p>
       </section>
 
-      <section id="domain-model" class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        id="domain-model"
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <h2 class="text-2xl font-semibold">Domain Model</h2>
         <div class="mt-4 grid gap-4 md:grid-cols-3">
           <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
             <h3 class="font-semibold">Codex-owned state</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
-              Thread, turn, item, and core agent runtime. Codexhub stores ids and
-              raw events for correlation, not lifecycle authority.
+              Thread, turn, item, and core agent runtime. Codexhub stores ids
+              and raw events for correlation, not lifecycle authority.
             </p>
           </div>
           <div class="rounded-lg border border-slate-200 bg-stone-50 p-4">
@@ -95,7 +111,10 @@
         </div>
       </section>
 
-      <section id="system-map" class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        id="system-map"
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <h2 class="text-2xl font-semibold">System Map</h2>
         <div class="mt-4 rounded-lg border border-slate-200 bg-stone-50 p-4">
           <pre class="mermaid">
@@ -134,28 +153,45 @@ flowchart TB
       <section id="key-flows" class="space-y-4">
         <h2 class="text-2xl font-semibold">Key Flows</h2>
         <div class="grid gap-4 lg:grid-cols-3">
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Start Worker</h3>
-            <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700">
+            <ol
+              class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700"
+            >
               <li>Unified I/O normalizes a CLI or GUI request.</li>
-              <li>Project Manager validates workspace, task spec, and run group context.</li>
-              <li>Runtime Ownership Seam starts or connects to Codex App Server.</li>
+              <li>
+                Project Manager validates workspace, task spec, and run group
+                context.
+              </li>
+              <li>
+                Runtime Ownership Seam starts or connects to Codex App Server.
+              </li>
               <li>Adapter starts the native thread and turn.</li>
               <li>Raw events append before projections are derived.</li>
             </ol>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Continue Or Steer</h3>
-            <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700">
+            <ol
+              class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700"
+            >
               <li>Project Manager checks Codexhub state-machine rules.</li>
               <li>Runtime Ownership Seam proves the process is live.</li>
               <li>Adapter sends the native protocol request.</li>
               <li>Events return through Adapter into the raw event log.</li>
             </ol>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Inspect Progress</h3>
-            <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700">
+            <ol
+              class="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-700"
+            >
               <li>Planning / Presentation reads records and projections.</li>
               <li>CLI and GUI receive bounded, human-readable views.</li>
               <li>Raw events remain an explicit debug surface.</li>
@@ -167,15 +203,19 @@ flowchart TB
       <section id="modules" class="space-y-4">
         <h2 class="text-2xl font-semibold">Modules And Interfaces</h2>
         <div class="grid gap-4 lg:grid-cols-2">
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Unified I/O Layer</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               Interface for CLI and GUI commands plus view/result output. It
-              owns input normalization and output adaptation, so a separate input
-              filter would fail the deletion test.
+              owns input normalization and output adaptation, so a separate
+              input filter would fail the deletion test.
             </p>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Project Manager</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               Owns Codexhub orchestration meaning: worker records, workspace
@@ -183,7 +223,9 @@ flowchart TB
               behavior. It must not parse every Codex payload or format UI.
             </p>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Runtime Ownership Seam</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               Proves process availability, starts or connects to Codex App
@@ -191,7 +233,9 @@ flowchart TB
               CodexRuntimeController is an earned seam.
             </p>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Codex App Server Adapter</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               The only Codex-native event ingress. It adapts JSON-RPC requests
@@ -199,7 +243,9 @@ flowchart TB
               lossless facts.
             </p>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Codexhub State Substrate</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               Contains raw Codex event log, Codexhub product records, and
@@ -207,7 +253,9 @@ flowchart TB
               WorkerSessionStore.
             </p>
           </article>
-          <article class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <article
+            class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
             <h3 class="font-semibold">Planning / Presentation Layer</h3>
             <p class="mt-2 text-sm leading-6 text-slate-700">
               Converts records and projections into transcript windows,
@@ -218,12 +266,15 @@ flowchart TB
         </div>
       </section>
 
-      <section id="risk-map" class="rounded-xl border border-amber-200 bg-amber-50 p-6">
+      <section
+        id="risk-map"
+        class="rounded-xl border border-amber-200 bg-amber-50 p-6"
+      >
         <h2 class="text-2xl font-semibold text-amber-950">Risk Map</h2>
         <div class="mt-4 grid gap-3 text-sm text-amber-950 md:grid-cols-2">
           <div class="rounded-lg border border-amber-200 bg-white/70 p-4">
-            Project Manager can become a god module if protocol parsing,
-            storage mechanics, and UI formatting move behind one interface.
+            Project Manager can become a god module if protocol parsing, storage
+            mechanics, and UI formatting move behind one interface.
           </div>
           <div class="rounded-lg border border-amber-200 bg-white/70 p-4">
             Adapter can bypass product invariants if it writes anything beyond
@@ -240,28 +291,60 @@ flowchart TB
         </div>
       </section>
 
-      <section id="decisions" class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section
+        id="decisions"
+        class="rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
         <h2 class="text-2xl font-semibold">Decisions</h2>
-        <ul class="mt-4 grid gap-2 text-sm leading-6 text-slate-700 md:grid-cols-2">
-          <li>Codex App Server owns native thread, turn, item, and agent runtime state.</li>
-          <li>Codexhub owns local orchestration meaning and operator projections.</li>
+        <ul
+          class="mt-4 grid gap-2 text-sm leading-6 text-slate-700 md:grid-cols-2"
+        >
+          <li>
+            Codex App Server owns native thread, turn, item, and agent runtime
+            state.
+          </li>
+          <li>
+            Codexhub owns local orchestration meaning and operator projections.
+          </li>
           <li>Unified I/O owns input normalization and output adaptation.</li>
           <li>Raw Codex events belong inside Codexhub State Substrate.</li>
           <li>State does not feed CLI or GUI directly.</li>
-          <li>Runtime ownership and protocol adaptation are related but separate seams.</li>
+          <li>
+            Runtime ownership and protocol adaptation are related but separate
+            seams.
+          </li>
         </ul>
       </section>
 
-      <section id="open-questions" class="rounded-xl border border-slate-900 bg-slate-950 p-6 text-white">
-        <p class="text-xs font-semibold uppercase tracking-wider text-slate-300">
+      <section
+        id="open-questions"
+        class="rounded-xl border border-slate-900 bg-slate-950 p-6 text-white"
+      >
+        <p
+          class="text-xs font-semibold uppercase tracking-wider text-slate-300"
+        >
           Open questions
         </p>
-        <h2 class="mt-2 text-2xl font-semibold">What to align before implementation</h2>
+        <h2 class="mt-2 text-2xl font-semibold">
+          What to align before implementation
+        </h2>
         <ul class="mt-4 space-y-2 text-sm leading-6 text-slate-200">
-          <li>Should Planning / Presentation live server-side, or in a shared package consumed by server, CLI, and GUI?</li>
-          <li>Should Project Manager start as one module or a thin orchestrator over worker, workspace, run group, and review modules?</li>
-          <li>Which Codex native events must append before Project Manager updates product records?</li>
-          <li>How should CodexRuntimeController evolve if process supervision and JSON-RPC protocol adaptation are separated?</li>
+          <li>
+            Should Planning / Presentation live server-side, or in a shared
+            package consumed by server, CLI, and GUI?
+          </li>
+          <li>
+            Should Project Manager start as one module or a thin orchestrator
+            over worker, workspace, run group, and review modules?
+          </li>
+          <li>
+            Which Codex native events must append before Project Manager updates
+            product records?
+          </li>
+          <li>
+            How should CodexRuntimeController evolve if process supervision and
+            JSON-RPC protocol adaptation are separated?
+          </li>
         </ul>
       </section>
     </main>

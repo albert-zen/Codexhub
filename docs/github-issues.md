@@ -91,6 +91,10 @@ narrower:
   renamed, or is deprecated from supported product language.
 - `#53`: preserve detached/resumable Thread semantics on server startup instead
   of marking missing runtime ownership as task failure.
+- `#54`: define the hook boundary for future external orchestration. CodexHub
+  core should invoke, observe, message, and persist agent threads; task ordering,
+  review assignment, retry policy, merge policy, and automatic scheduling belong
+  to users, manager agents, hooks, or external orchestrators.
 
 ## Later Closed Follow-Ups
 

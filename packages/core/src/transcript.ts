@@ -60,7 +60,7 @@ export function buildTranscriptEntries(
   items: Item[],
 ): TranscriptEntry[] {
   const drafts: DraftTranscriptEntry[] = [
-    ...messages.filter(isSentMessage).map(messageEntry),
+    ...messages.filter(isVisibleMessage).map(messageEntry),
     ...itemEntries(sessionId, items),
   ];
 
@@ -227,8 +227,8 @@ function roleForKind(kind: TranscriptEntryKind): TranscriptEntryRole {
   return "debug";
 }
 
-function isSentMessage(message: Message): boolean {
-  return message.status === "sent";
+function isVisibleMessage(message: Message): boolean {
+  return message.status === "sent" || message.status === "failed";
 }
 
 function emptyToNull(value: string): string | null {

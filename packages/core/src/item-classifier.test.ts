@@ -38,6 +38,15 @@ describe("Codex item classifier", () => {
         },
       }).type,
     ).toBe("toolresult");
+
+    expect(
+      classifyCodexPayload({
+        method: "item/tool/result",
+        params: {
+          item: { id: "cmd-1", type: "toolResult", text: "ok" },
+        },
+      }).type,
+    ).toBe("toolresult");
   });
 
   it("keeps unknown payloads as raw", () => {

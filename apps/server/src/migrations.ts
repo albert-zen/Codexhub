@@ -198,6 +198,40 @@ const migrations: Migration[] = [
       CREATE INDEX idx_review_findings_status ON review_findings(status);
     `,
   },
+  {
+    version: 7,
+    name: "message_idempotency_keys",
+    sql: `
+      CREATE TABLE message_idempotency_keys (
+        session_id TEXT NOT NULL REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, idempotency_key),
+        UNIQUE (message_id)
+      ) STRICT;
+
+      CREATE INDEX idx_message_idempotency_message_id
+        ON message_idempotency_keys(message_id);
+    `,
+  },
+  {
+    version: 8,
+    name: "thread_idempotency_keys",
+    sql: `
+      CREATE TABLE thread_idempotency_keys (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES worker_sessions(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, idempotency_key),
+        UNIQUE (session_id)
+      ) STRICT;
+
+      CREATE INDEX idx_thread_idempotency_session_id
+        ON thread_idempotency_keys(session_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: DatabaseSync): void {

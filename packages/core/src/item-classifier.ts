@@ -37,6 +37,10 @@ export function classifyCodexPayload(payload: unknown): ClassifiedItem {
     return result("toolresult", method, itemId, itemType, text);
   }
 
+  if (method === "item/tool/result") {
+    return result("toolresult", method, itemId, itemType, text);
+  }
+
   if (
     method === "item/reasoning/textDelta" ||
     method === "item/reasoning/summaryTextDelta"

@@ -9,7 +9,12 @@ import type {
   TranscriptPageOptions,
   WorkerSession,
 } from "@codexhub/core";
-import { isTerminalStatus } from "@codexhub/core";
+import {
+  isTerminalStatus,
+  projectThreadContext,
+  projectToolCalls,
+  toThreadSummary,
+} from "@codexhub/core";
 import { openDatabase, type CodexHubDatabase } from "./database.js";
 import {
   HubRepository,
@@ -42,6 +47,8 @@ interface ServerState {
   repo: HubRepository;
   productManager: ProductManager;
 }
+
+type ThreadWaitMode = "accepted" | "first-event" | "turn-complete";
 
 export async function createServer(options: CreateServerOptions = {}) {
   const app = Fastify({ logger: options.logger ?? true });
@@ -177,6 +184,32 @@ function registerApiRoutes(
     if (cursor) listOptions.cursor = cursor;
     const page = state.repo.listSessions(listOptions);
     return { ...page, sessions: page.items };
+  });
+
+  app.get(path("/projects/:id/threads"), async (request) => {
+    const params = asRecord(request.params);
+    const query = asRecord(request.query);
+    const project = state.repo.getProject(requiredString(params, "id"));
+    if (!project)
+      throw new HttpError(404, "project_not_found", "project not found");
+    const listOptions: SessionListOptions = { project_id: project.id };
+    const limit = optionalNumber(query, "limit");
+    const cursor = optionalString(query, "cursor");
+    if (limit !== undefined) listOptions.limit = limit;
+    if (cursor) listOptions.cursor = cursor;
+    const page = state.repo.listSessions(listOptions);
+    const threads = page.items.map(toThreadSummary);
+    return { ...page, items: threads, threads };
+  });
+
+  app.post(path("/projects/:id/threads"), async (request) => {
+    const body = asRecord(request.body);
+    const result = await state.productManager.createThread({
+      projectId: requiredString(asRecord(request.params), "id"),
+      workspaceId: requiredString(body, "workspace_id"),
+      idempotencyKey: optionalString(body, "idempotency_key"),
+    });
+    return result;
   });
 
   app.post(path("/run-groups"), async (request) => {
@@ -408,6 +441,22 @@ function registerApiRoutes(
     return { session, workspace, task_spec };
   });
 
+  app.get(path("/threads/:id"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    const workspace =
+      state.repo.getWorkspace(session.workspace_id) ?? undefined;
+    const task_spec = state.repo.getTaskSpec(session.id);
+    return {
+      thread: toThreadSummary(session),
+      session,
+      workspace,
+      task_spec,
+    };
+  });
+
   app.post(path("/sessions/:id/messages"), async (request) => {
     const body = asRecord(request.body);
     const mode = parseMessageMode(requiredString(body, "mode"));
@@ -420,6 +469,7 @@ function registerApiRoutes(
         senderType:
           parseSenderType(optionalString(body, "sender_type")) ?? "human",
         senderId: optionalString(body, "sender_id"),
+        idempotencyKey: optionalString(body, "idempotency_key"),
       });
     } catch (error) {
       if (
@@ -437,6 +487,39 @@ function registerApiRoutes(
     }
   });
 
+  app.post(path("/threads/:id/messages"), async (request) => {
+    const body = asRecord(request.body);
+    const threadReference = requiredString(asRecord(request.params), "id");
+    const beforeSend = requireSession(state.repo, threadReference);
+    const mode = parseMessageMode(optionalString(body, "mode") ?? "continue");
+    const content = optionalString(body, "content") ?? "";
+    const wait = parseThreadWaitMode(optionalString(body, "wait"));
+    const result = await state.productManager.sendWorkerMessage({
+      sessionReference: threadReference,
+      mode,
+      content,
+      senderType:
+        parseSenderType(optionalString(body, "sender_type")) ?? "human",
+      senderId: optionalString(body, "sender_id"),
+      idempotencyKey: optionalString(body, "idempotency_key"),
+      keepThreadReadableOnRuntimeUnavailable: true,
+      ensureRuntimeReady: true,
+    });
+    const settledSession = await waitForThreadMilestone(
+      state,
+      result.session.id,
+      wait,
+      parseDurationMs(optionalString(body, "timeout")) ?? 30_000,
+      beforeSend.last_item_sequence,
+    );
+    return {
+      ...result,
+      session: settledSession,
+      thread: toThreadSummary(settledSession),
+      wait,
+    };
+  });
+
   app.get(path("/sessions/:id/messages"), async (request) => {
     const session = requireSession(
       state.repo,
@@ -444,6 +527,108 @@ function registerApiRoutes(
     );
     const items = state.repo.listMessages(session.id);
     return { items, messages: items, next_cursor: null, limit: items.length };
+  });
+
+  app.get(path("/threads/:id/transcript"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    return transcriptPageResponse(state, session.id, asRecord(request.query));
+  });
+
+  app.get(path("/threads/:id/items"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    return itemPageResponse(state, session.id, asRecord(request.query));
+  });
+
+  app.get(path("/threads/:id/latest"), async (request) =>
+    latestResponse(state, request, true),
+  );
+
+  app.get(path("/threads/:id/tool-calls"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    const query = asRecord(request.query);
+    const limit = optionalNumber(query, "limit") ?? 50;
+    const recent = optionalBoolean(query, "recent") ?? true;
+    const tools = parseContextTools(optionalString(query, "tools"));
+    if (tools === "hidden") {
+      return {
+        items: [],
+        tool_calls: [],
+        limit,
+        next_cursor: null,
+        thread_id: session.id,
+        session_id: session.id,
+      };
+    }
+    const page = state.repo.listItems(session.id, {
+      type: "all",
+      limit,
+      recent,
+    });
+    const tool_calls = projectToolCalls(page.items, {
+      expanded: tools === "expanded",
+    });
+    return {
+      items: tool_calls,
+      tool_calls,
+      limit,
+      next_cursor: page.next_cursor,
+      thread_id: session.id,
+      session_id: session.id,
+    };
+  });
+
+  app.get(path("/threads/:id/context"), async (request) => {
+    const session = requireSession(
+      state.repo,
+      requiredString(asRecord(request.params), "id"),
+    );
+    const query = asRecord(request.query);
+    const limit = optionalNumber(query, "limit") ?? 20;
+    const recent = optionalBoolean(query, "recent") ?? true;
+    const contextOptions: TranscriptPageOptions = { limit, recent };
+    const after =
+      optionalNumber(query, "after") ??
+      optionalNumber(query, "after_sequence") ??
+      optionalNumber(query, "cursor");
+    const before =
+      optionalNumber(query, "before") ??
+      optionalNumber(query, "before_sequence");
+    if (after !== undefined) contextOptions.after = after;
+    if (before !== undefined) contextOptions.before = before;
+    const transcriptPage = state.repo.listTranscript(session.id, {
+      limit,
+      recent,
+      ...("after" in contextOptions ? { after: contextOptions.after } : {}),
+      ...("before" in contextOptions ? { before: contextOptions.before } : {}),
+    });
+    const itemPage = state.repo.listItems(session.id, {
+      type: "all",
+      limit: 200,
+      recent: true,
+    });
+    const context = projectThreadContext(
+      toThreadSummary(session),
+      state.repo.listFailedMessages(session.id),
+      itemPage.items,
+      {
+        ...contextOptions,
+        tools: parseContextTools(optionalString(query, "tools")),
+      },
+    );
+    return {
+      ...context,
+      transcript: transcriptPage.items,
+      next_cursor: transcriptPage.next_cursor,
+    };
   });
 
   app.get(path("/sessions/:id/review-status"), async (request) => {
@@ -782,7 +967,9 @@ function productManagerStatusCode(code: string): number {
     code === "session_id_ambiguous" ||
     code === "session_not_terminal" ||
     code === "session_terminal" ||
-    code === "session_process_unavailable"
+    code === "session_process_unavailable" ||
+    code === "thread_not_ready" ||
+    code === "thread_turn_in_progress"
   ) {
     return 409;
   }
@@ -904,6 +1091,76 @@ function parseItemType(
     return value;
   }
   throw new HttpError(400, "invalid_item_type", "unsupported item type");
+}
+
+function parseContextTools(
+  value: string | null,
+): "hidden" | "collapsed" | "expanded" {
+  if (value === null) return "collapsed";
+  if (value === "hidden" || value === "collapsed" || value === "expanded") {
+    return value;
+  }
+  throw new HttpError(400, "invalid_tools", "unsupported tools view");
+}
+
+function parseThreadWaitMode(value: string | null): ThreadWaitMode {
+  if (value === null || value === "accepted") return "accepted";
+  if (value === "first-event" || value === "turn-complete") return value;
+  throw new HttpError(400, "invalid_wait", "unsupported thread wait mode");
+}
+
+function parseDurationMs(value: string | null): number | null {
+  if (value === null) return null;
+  const match = value.trim().match(/^(\d+)(ms|s)?$/);
+  if (!match) {
+    throw new HttpError(
+      400,
+      "invalid_timeout",
+      "timeout must be milliseconds or seconds, for example 5000ms or 5s",
+    );
+  }
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "ms";
+  return unit === "s" ? amount * 1000 : amount;
+}
+
+async function waitForThreadMilestone(
+  state: ServerState,
+  sessionId: string,
+  wait: ThreadWaitMode,
+  timeoutMs: number,
+  initialItemSequence: number,
+): Promise<WorkerSession> {
+  if (wait === "accepted") {
+    return requireSession(state.repo, sessionId);
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
+    const current = requireSession(state.repo, sessionId);
+    if (
+      wait === "first-event" &&
+      current.last_item_sequence > initialItemSequence
+    ) {
+      return current;
+    }
+    if (
+      wait === "turn-complete" &&
+      (current.status === "awaiting_input" || isTerminalStatus(current.status))
+    ) {
+      return current;
+    }
+    await delay(50);
+  }
+
+  throw new HttpError(408, "thread_wait_timeout", "thread wait timed out", {
+    session_id: sessionId,
+    wait,
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseReviewGateStatusUpdate(

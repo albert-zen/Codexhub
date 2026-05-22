@@ -2,9 +2,10 @@
 
 Codexhub is a local Codex worker control plane for manager agents and humans.
 
-It creates and tracks workspaces, starts Codex app-server worker sessions, stores
-raw Codex item streams, and exposes low-context API and CLI surfaces for reading
-worker status and sending follow-up messages.
+It creates and tracks projects and workspaces, starts or resumes Codex
+app-server worker threads, stores raw Codex item streams, and exposes
+low-context API and CLI surfaces for reading worker status and sending explicit
+messages.
 
 ## Quick start
 
@@ -62,9 +63,32 @@ $Health = node apps/cli/dist/index.js health --json | ConvertFrom-Json
 Do not pipe plain `pnpm --filter @codexhub/cli dev -- ... --json` into a JSON
 parser; pnpm may print script banners before the CLI payload. If parsing fails
 after a side-effecting command such as `project create`, `workspace create`,
-`session start`, `session follow-up`, `session send`, or `run-group create`,
-inspect existing state before retrying so the manager does not create
-duplicates.
+`thread create`, `thread send`, `session start`, `session follow-up`,
+`session send`, or `run-group create`, inspect existing state before retrying so
+the manager does not create duplicates.
+
+For new agent-facing automation, prefer the project-scoped `thread` commands.
+A thread is the human/agent conversation surface; the backing session id remains
+the stable identifier, but the CLI and API can start or resume the Codex runtime
+behind it when you send a message:
+
+```powershell
+$Project = pnpm --silent --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json | ConvertFrom-Json
+$Workspace = pnpm --silent --filter @codexhub/cli dev -- workspace create --project $Project.project.id --source local --path D:\desktop\Codexhub-workspaces\demo --json | ConvertFrom-Json
+$Thread = pnpm --silent --filter @codexhub/cli dev -- thread create --project $Project.project.id --workspace $Workspace.workspace.id --idempotency-key demo-thread --json | ConvertFrom-Json
+
+pnpm --silent --filter @codexhub/cli dev -- thread send $Thread.thread.id --message "Inspect this workspace and report status." --wait turn-complete --idempotency-key demo-send --json
+pnpm --silent --filter @codexhub/cli dev -- thread context $Thread.thread.id --limit 10 --tools collapsed --json
+pnpm --filter @codexhub/cli dev -- thread trace $Thread.thread.id --limit 20
+pnpm --filter @codexhub/cli dev -- thread latest $Thread.thread.id
+pnpm --silent --filter @codexhub/cli dev -- thread tool-calls $Thread.thread.id --tools expanded --json
+```
+
+`thread send` always requires message content. For an empty thread it starts the
+Codex runtime with that content as the initial prompt. For a detached, stopped,
+completed, or failed backing session that still has a Codex thread cursor, it
+attempts to resume the runtime before sending. There is no separate resume
+button or CLI command in the normal path.
 
 ```powershell
 $Project = pnpm --silent --filter @codexhub/cli dev -- project create --name demo --workspace-root D:\desktop\Codexhub-workspaces --json | ConvertFrom-Json
@@ -106,11 +130,12 @@ when `session latest --type all` is used.
 `continue` messages must include explicit content. Codexhub does not treat an
 empty message as an instruction to proceed.
 
-Stopped, completed, and failed sessions do not have a live Codex process to
-message. Start a follow-up session to continue in a fresh worker. The follow-up
-keeps the previous session unchanged, records `previous_session_id`, defaults to
-the same workspace, and copies the prior task-spec metadata unless new metadata
-is supplied:
+The lower-level `session` commands are still available for compatibility and
+debugging. Stopped, completed, and failed sessions do not have a live Codex
+process to message through `session send`; start a follow-up session to continue
+in a fresh worker. The follow-up keeps the previous session unchanged, records
+`previous_session_id`, defaults to the same workspace, and copies the prior
+task-spec metadata unless new metadata is supplied:
 
 ```powershell
 $FollowUp = pnpm --silent --filter @codexhub/cli dev -- session follow-up $TerminalSessionId --message "Continue from the previous result and report status." --json | ConvertFrom-Json

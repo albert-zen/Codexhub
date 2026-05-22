@@ -8,6 +8,24 @@ export type WorkerSessionStatus =
   | "failed"
   | "stopped";
 
+export type ThreadState = "empty" | "active" | "archived";
+export type ConversationState =
+  | "loadingHistory"
+  | "ready"
+  | "sendingUserMessage"
+  | "streamingAssistant"
+  | "failedToSend"
+  | "failedToLoad";
+export type RuntimeState =
+  | "unknown"
+  | "notStarted"
+  | "starting"
+  | "ready"
+  | "busy"
+  | "paused"
+  | "exited"
+  | "failed";
+
 export type WorkspaceStatus =
   | "creating"
   | "ready"
@@ -96,6 +114,50 @@ export interface WorkerSession {
   ended_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ThreadSummary {
+  id: ID;
+  session_id: ID;
+  project_id: ID;
+  workspace_id: ID;
+  codex_thread_id: string | null;
+  thread_state: ThreadState;
+  conversation_state: ConversationState;
+  runtime_state: RuntimeState;
+  last_agent_message: string | null;
+  last_agent_message_at: string | null;
+  last_item_sequence: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ThreadAction = "send" | "stop_runtime";
+export type ThreadAttentionReason =
+  | "failed_to_send"
+  | "failed_to_load"
+  | "runtime_failed";
+
+export interface ToolCallSummary {
+  id: ID;
+  session_id: ID;
+  status: "called" | "completed";
+  text: string | null;
+  result_text: string | null;
+  item_ids: ID[];
+  item_sequences: number[];
+  items?: Item[];
+}
+
+export interface ThreadContext {
+  thread: ThreadSummary;
+  latest_agent_message: string | null;
+  allowed_actions: ThreadAction[];
+  attention_reasons: ThreadAttentionReason[];
+  transcript: TranscriptEntry[];
+  tool_calls: ToolCallSummary[];
+  limit: number;
+  next_cursor: string | null;
 }
 
 export interface TaskSpecMetadata {

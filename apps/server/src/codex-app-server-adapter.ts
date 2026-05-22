@@ -76,6 +76,27 @@ export function codexThreadStartRequest(
   };
 }
 
+export function codexThreadResumeRequest(
+  id: number,
+  options: {
+    threadId: string;
+    cwd: string;
+    approvalPolicy: unknown;
+    sandbox: string;
+  },
+): CodexAppServerRequest {
+  return {
+    method: "thread/resume",
+    id,
+    params: {
+      threadId: options.threadId,
+      cwd: options.cwd,
+      approvalPolicy: options.approvalPolicy,
+      sandbox: options.sandbox,
+    },
+  };
+}
+
 export function codexTurnStartRequest(
   id: number,
   options: {

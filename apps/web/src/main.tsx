@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { SESSION_ACTIONS, getSessionActionAvailability } from "@codexhub/core";
 import type {
@@ -18,14 +24,6 @@ import type {
   SessionAction,
 } from "@codexhub/core";
 import {
-  buildFollowUpSessionRequest,
-  buildStartSessionRequest,
-  canStartFollowUpFromStatus,
-  createEmptySessionDraft,
-  validateSessionDraft,
-  type SessionDraft,
-} from "./session-forms.js";
-import {
   attentionLabels,
   reviewStateLabel,
   runGroupDashboardCounts,
@@ -35,6 +33,12 @@ import {
   type TranscriptCursor,
   conversationWindow,
 } from "./transcript-view.js";
+import {
+  canSendThreadMessage,
+  conversationPageLabel,
+  isEmptyThreadSession,
+  isResumableThreadSession,
+} from "./thread-ui-state.js";
 import "./styles.css";
 
 type SendMessageMode = Exclude<MessageMode, "initial">;
@@ -318,52 +322,28 @@ async function sendMessage(
   mode: SendMessageMode,
   content: string,
 ): Promise<void> {
-  await request<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}/messages`,
+  await request<unknown>(`/threads/${encodeURIComponent(sessionId)}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      mode,
+      content,
+      sender_type: "human",
+    }),
+  });
+}
+
+async function createThread(
+  projectId: ID,
+  workspaceId: ID,
+): Promise<WorkerSession> {
+  const body = await request<unknown>(
+    `/projects/${encodeURIComponent(projectId)}/threads`,
     {
       method: "POST",
       body: JSON.stringify({
-        mode,
-        content,
-        sender_type: "human",
+        workspace_id: workspaceId,
+        idempotency_key: `web-${projectId}-${workspaceId}-${Date.now()}`,
       }),
-    },
-  );
-}
-
-async function updateSessionState(
-  sessionId: ID,
-  action: "stop" | "complete",
-): Promise<void> {
-  await request<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}/${action}`,
-    {
-      method: "POST",
-      body: JSON.stringify({}),
-    },
-  );
-}
-
-async function startSession(
-  projectId: ID,
-  draft: SessionDraft,
-): Promise<WorkerSession> {
-  const body = await request<unknown>("/sessions", {
-    method: "POST",
-    body: JSON.stringify(buildStartSessionRequest(projectId, draft)),
-  });
-  return entityFrom<WorkerSession>(body, "session");
-}
-
-async function startFollowUpSession(
-  previousSessionId: ID,
-  draft: SessionDraft,
-): Promise<WorkerSession> {
-  const body = await request<unknown>(
-    `/sessions/${encodeURIComponent(previousSessionId)}/follow-up`,
-    {
-      method: "POST",
-      body: JSON.stringify(buildFollowUpSessionRequest(draft)),
     },
   );
   return entityFrom<WorkerSession>(body, "session");
@@ -404,15 +384,6 @@ function statusLabel(status: WorkerSessionStatus): string {
 
 function attentionClass(label: string): string {
   return `attention-badge attention-${label.toLowerCase().replaceAll(" ", "-")}`;
-}
-
-function workspaceLabel(workspace: Workspace): string {
-  const status =
-    workspace.status === "ready"
-      ? ""
-      : ` (${workspace.status.replace("_", " ")})`;
-  const branch = workspace.branch ? ` @ ${workspace.branch}` : "";
-  return `${shortId(workspace.id)}${branch}${status} - ${workspace.cwd}`;
 }
 
 function preferredWorkspaceId(
@@ -519,22 +490,6 @@ function sequenceRangeLabel(values: number[]): string {
   return `items #${first}-${last} (${sorted.length})`;
 }
 
-function transcriptWindowLabel(
-  entries: TranscriptEntry[],
-  cursor: TranscriptCursor,
-): string {
-  const prefix = cursor.recent ? "recent " : "";
-  if (entries.length === 0)
-    return cursor.recent
-      ? "recent entries"
-      : `after entry #${cursor.afterSequence ?? 0}`;
-  const first = entries[0]?.sequence ?? cursor.afterSequence ?? 0;
-  const last = entries[entries.length - 1]?.sequence ?? first;
-  return first === last
-    ? `${prefix}entry #${first}`
-    : `${prefix}entries #${first}-${last}`;
-}
-
 function itemWindowLabel(items: Item[], afterSequence: number | null): string {
   if (items.length === 0) return `after #${afterSequence ?? 0}`;
   const first = items[0]?.sequence ?? afterSequence ?? 0;
@@ -565,170 +520,6 @@ function TranscriptMetadataDetails({ entry }: { entry: TranscriptEntry }) {
       <summary>Transcript metadata</summary>
       <pre>{displayJson(transcriptMetadata(entry))}</pre>
     </details>
-  );
-}
-
-interface SessionDraftFormProps {
-  idPrefix: string;
-  draft: SessionDraft;
-  workspaces: Workspace[];
-  disabled: boolean;
-  submitting: boolean;
-  submitDisabled: boolean;
-  submitLabel: string;
-  submittingLabel: string;
-  validationMessages: string[];
-  error: string | null;
-  onDraftChange: (draft: SessionDraft) => void;
-  onSubmit: () => Promise<void>;
-}
-
-function SessionDraftForm({
-  idPrefix,
-  draft,
-  workspaces,
-  disabled,
-  submitting,
-  submitDisabled,
-  submitLabel,
-  submittingLabel,
-  validationMessages,
-  error,
-  onDraftChange,
-  onSubmit,
-}: SessionDraftFormProps) {
-  const fieldId = (name: string) => `${idPrefix}-${name}`;
-  const setDraftField = (field: keyof SessionDraft, value: string) => {
-    onDraftChange({ ...draft, [field]: value });
-  };
-
-  return (
-    <form
-      className="session-draft-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (!submitDisabled) void onSubmit();
-      }}
-    >
-      <label className="field" htmlFor={fieldId("workspace")}>
-        <span>Workspace</span>
-        <select
-          id={fieldId("workspace")}
-          value={draft.workspaceId}
-          onChange={(event) => setDraftField("workspaceId", event.target.value)}
-          disabled={disabled || workspaces.length === 0}
-        >
-          <option value="">Select workspace</option>
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspaceLabel(workspace)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="field" htmlFor={fieldId("prompt")}>
-        <span>Initial prompt</span>
-        <textarea
-          id={fieldId("prompt")}
-          value={draft.prompt}
-          onChange={(event) => setDraftField("prompt", event.target.value)}
-          placeholder="Describe the work for the worker..."
-          rows={3}
-          disabled={disabled}
-        />
-      </label>
-
-      <details className="task-spec-fields">
-        <summary>Task spec fields</summary>
-        <div className="field-grid">
-          <label className="field" htmlFor={fieldId("task-ref")}>
-            <span>Ref</span>
-            <input
-              id={fieldId("task-ref")}
-              type="text"
-              value={draft.taskRef}
-              onChange={(event) => setDraftField("taskRef", event.target.value)}
-              disabled={disabled}
-            />
-          </label>
-          <label className="field" htmlFor={fieldId("task-title")}>
-            <span>Title</span>
-            <input
-              id={fieldId("task-title")}
-              type="text"
-              value={draft.taskTitle}
-              onChange={(event) =>
-                setDraftField("taskTitle", event.target.value)
-              }
-              disabled={disabled}
-            />
-          </label>
-          <label className="field field-wide" htmlFor={fieldId("task-intent")}>
-            <span>Intent</span>
-            <textarea
-              id={fieldId("task-intent")}
-              value={draft.taskIntent}
-              onChange={(event) =>
-                setDraftField("taskIntent", event.target.value)
-              }
-              rows={2}
-              disabled={disabled}
-            />
-          </label>
-          <label className="field field-wide" htmlFor={fieldId("task-scope")}>
-            <span>Scope</span>
-            <textarea
-              id={fieldId("task-scope")}
-              value={draft.taskScope}
-              onChange={(event) =>
-                setDraftField("taskScope", event.target.value)
-              }
-              rows={2}
-              disabled={disabled}
-            />
-          </label>
-          <label
-            className="field field-wide"
-            htmlFor={fieldId("task-acceptance")}
-          >
-            <span>Acceptance</span>
-            <textarea
-              id={fieldId("task-acceptance")}
-              value={draft.taskAcceptance}
-              onChange={(event) =>
-                setDraftField("taskAcceptance", event.target.value)
-              }
-              rows={2}
-              disabled={disabled}
-            />
-          </label>
-        </div>
-      </details>
-
-      <div className="action-row form-action-row">
-        <button
-          className="button"
-          type="submit"
-          disabled={disabled || submitDisabled}
-        >
-          {submitting ? submittingLabel : submitLabel}
-        </button>
-      </div>
-
-      {error ? (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {validationMessages.length > 0 ? (
-        <ul className="form-help">
-          {validationMessages.map((message) => (
-            <li key={message}>{message}</li>
-          ))}
-        </ul>
-      ) : null}
-    </form>
   );
 }
 
@@ -951,26 +742,17 @@ function App() {
   const [itemNextCursor, setItemNextCursor] = useState<string | null>(null);
   const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
-  const [createDraft, setCreateDraft] = useState<SessionDraft>(() =>
-    createEmptySessionDraft(),
-  );
-  const [followUpDraft, setFollowUpDraft] = useState<SessionDraft>(() =>
-    createEmptySessionDraft(),
-  );
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
-  const [loadingRunGroups, setLoadingRunGroups] = useState(false);
+  const [, setLoadingRunGroups] = useState(false);
   const [loadingRunGroupDetail, setLoadingRunGroupDetail] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState<SessionAction | null>(null);
-  const [submittingStart, setSubmittingStart] = useState(false);
-  const [submittingFollowUp, setSubmittingFollowUp] = useState(false);
+  const [creatingThreadProjectId, setCreatingThreadProjectId] =
+    useState<ID | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [createSessionError, setCreateSessionError] = useState<string | null>(
-    null,
-  );
-  const [followUpError, setFollowUpError] = useState<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const actionAvailability = selectedSession
     ? getSessionActionAvailability({
         status: selectedSession.status,
@@ -978,30 +760,25 @@ function App() {
         submitting,
       })
     : null;
+  const selectedThreadIsEmpty = isEmptyThreadSession(selectedSession);
+  const canSendSelectedThread = canSendThreadMessage({
+    session: selectedSession,
+    message,
+    submitting,
+    continueDisabled: actionAvailability?.continue.disabled ?? true,
+  });
   const disabledActions = actionAvailability
     ? SESSION_ACTIONS.filter((action) => actionAvailability[action].disabled)
     : [];
+  const disabledComposerActions = disabledActions.filter(
+    (action) =>
+      !selectedThreadIsEmpty &&
+      !isResumableThreadSession(selectedSession) &&
+      (action === "steer" || action === "continue") &&
+      !(action === "continue" && isResumableThreadSession(selectedSession)),
+  );
   const actionHelpId =
-    disabledActions.length > 0 ? "session-action-help" : undefined;
-  const followUpAvailable =
-    selectedSession !== null &&
-    canStartFollowUpFromStatus(selectedSession.status);
-  const createValidationMessages = [
-    ...(selectedProjectId ? [] : ["Select a project."]),
-    ...validateSessionDraft(createDraft, { requireWorkspace: true }),
-  ];
-  const followUpValidationMessages =
-    selectedSession && followUpAvailable
-      ? validateSessionDraft(followUpDraft, { requireWorkspace: true })
-      : [];
-  const createSubmitDisabled =
-    submittingStart || loadingWorkspaces || createValidationMessages.length > 0;
-  const followUpSubmitDisabled =
-    submittingFollowUp ||
-    loadingWorkspaces ||
-    !followUpAvailable ||
-    followUpValidationMessages.length > 0;
-
+    disabledComposerActions.length > 0 ? "session-action-help" : undefined;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
@@ -1061,18 +838,8 @@ function App() {
     try {
       const nextWorkspaces = await fetchWorkspaces(projectId);
       setWorkspaces(nextWorkspaces);
-      setCreateDraft((current) => ({
-        ...current,
-        workspaceId: preferredWorkspaceId(nextWorkspaces, current.workspaceId),
-      }));
-      setFollowUpDraft((current) => ({
-        ...current,
-        workspaceId: preferredWorkspaceId(nextWorkspaces, current.workspaceId),
-      }));
     } catch (loadError) {
       setWorkspaces([]);
-      setCreateDraft((current) => ({ ...current, workspaceId: "" }));
-      setFollowUpDraft((current) => ({ ...current, workspaceId: "" }));
       setError(`Workspaces: ${getErrorMessage(loadError)}`);
     } finally {
       setLoadingWorkspaces(false);
@@ -1093,7 +860,7 @@ function App() {
     } catch (loadError) {
       setSessions([]);
       setSelectedSessionId(null);
-      setError(`Sessions: ${getErrorMessage(loadError)}`);
+      setError(`Threads: ${getErrorMessage(loadError)}`);
     } finally {
       setLoadingSessions(false);
     }
@@ -1174,7 +941,7 @@ function App() {
         setTranscriptNextCursor(null);
         setItems([]);
         setItemNextCursor(null);
-        setError(`Session detail: ${getErrorMessage(loadError)}`);
+        setError(`Thread detail: ${getErrorMessage(loadError)}`);
       } finally {
         setLoadingDetail(false);
       }
@@ -1230,25 +997,12 @@ function App() {
       setRunGroupHistory([]);
       setRunGroupNextCursor(null);
       setActiveDetail("session");
-      setCreateDraft((current) => ({ ...current, workspaceId: "" }));
-      setFollowUpDraft((current) => ({ ...current, workspaceId: "" }));
       return;
     }
     void loadWorkspaces(selectedProjectId);
     void loadSessions(selectedProjectId);
     void loadRunGroups(selectedProjectId);
   }, [loadRunGroups, loadSessions, loadWorkspaces, selectedProjectId]);
-
-  useEffect(() => {
-    setFollowUpDraft((current) => ({
-      ...current,
-      workspaceId: preferredWorkspaceId(
-        workspaces,
-        current.workspaceId,
-        selectedSession?.workspace_id,
-      ),
-    }));
-  }, [selectedSession?.workspace_id, workspaces]);
 
   useEffect(() => {
     if (!selectedSessionId) {
@@ -1291,13 +1045,8 @@ function App() {
   }, [loadRunGroupDetail, selectedRunGroupId]);
 
   useEffect(() => {
-    setFollowUpDraft(
-      createEmptySessionDraft(
-        preferredWorkspaceId(workspaces, "", selectedSession?.workspace_id),
-      ),
-    );
-    setFollowUpError(null);
-  }, [selectedSession?.id]);
+    if (selectedThreadIsEmpty) composerRef.current?.focus();
+  }, [selectedThreadIsEmpty, selectedSession?.id]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1314,7 +1063,13 @@ function App() {
       message: content,
       submitting,
     })[mode];
-    if (availability.disabled) return;
+    if (
+      !isEmptyThreadSession(selectedSession) &&
+      availability.disabled &&
+      !(mode === "continue" && isResumableThreadSession(selectedSession))
+    ) {
+      return;
+    }
     setSubmitting(mode);
     setError(null);
     try {
@@ -1328,66 +1083,28 @@ function App() {
     }
   }
 
-  async function handleAction(action: "stop" | "complete") {
-    if (!selectedSession) return;
-    const availability = getSessionActionAvailability({
-      status: selectedSession.status,
-      message,
-      submitting,
-    })[action];
-    if (availability.disabled) return;
-    setSubmitting(action);
+  async function handleCreateThread(projectId: ID) {
+    if (creatingThreadProjectId) return;
+    setCreatingThreadProjectId(projectId);
     setError(null);
     try {
-      await updateSessionState(selectedSession.id, action);
-      await refreshCurrent();
-    } catch (actionError) {
-      setError(`${action}: ${getErrorMessage(actionError)}`);
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function handleStartSession() {
-    if (!selectedProjectId || createSubmitDisabled) return;
-    setSubmittingStart(true);
-    setCreateSessionError(null);
-    setError(null);
-    try {
-      const nextSession = await startSession(selectedProjectId, createDraft);
-      setCreateDraft(createEmptySessionDraft(createDraft.workspaceId));
-      await loadSessions(selectedProjectId);
-      setSelectedSessionId(nextSession.id);
+      const projectWorkspaces =
+        projectId === selectedProjectId
+          ? workspaces
+          : await fetchWorkspaces(projectId);
+      const workspaceId = preferredWorkspaceId(projectWorkspaces, "");
+      if (!workspaceId) throw new Error("No workspace is available.");
+      const thread = await createThread(projectId, workspaceId);
+      await loadSessions(projectId);
+      setSelectedProjectId(projectId);
+      setWorkspaces(projectWorkspaces);
+      setSelectedSessionId(thread.id);
       setActiveDetail("session");
-    } catch (startError) {
-      setCreateSessionError(
-        `Start session failed: ${getErrorMessage(startError)}`,
-      );
+      setMessage("");
+    } catch (createError) {
+      setError(`Thread: ${getErrorMessage(createError)}`);
     } finally {
-      setSubmittingStart(false);
-    }
-  }
-
-  async function handleStartFollowUp() {
-    if (!selectedSession || followUpSubmitDisabled) return;
-    setSubmittingFollowUp(true);
-    setFollowUpError(null);
-    setError(null);
-    try {
-      const nextSession = await startFollowUpSession(
-        selectedSession.id,
-        followUpDraft,
-      );
-      setFollowUpDraft(createEmptySessionDraft(followUpDraft.workspaceId));
-      if (selectedProjectId) await loadSessions(selectedProjectId);
-      setSelectedSessionId(nextSession.id);
-      setActiveDetail("session");
-    } catch (startError) {
-      setFollowUpError(
-        `Start follow-up failed: ${getErrorMessage(startError)}`,
-      );
-    } finally {
-      setSubmittingFollowUp(false);
+      setCreatingThreadProjectId(null);
     }
   }
 
@@ -1499,19 +1216,37 @@ function App() {
           </div>
           <div className="list">
             {projects.map((project) => (
-              <button
-                className={`list-row ${project.id === selectedProjectId ? "is-active" : ""}`}
+              <div
+                className={`project-row-shell ${project.id === selectedProjectId ? "is-active" : ""}`}
                 key={project.id}
-                type="button"
-                onClick={() => setSelectedProjectId(project.id)}
               >
-                <strong>{project.name}</strong>
-                <span>
-                  {project.default_branch ??
-                    project.default_cwd ??
-                    shortId(project.id)}
-                </span>
-              </button>
+                <button
+                  className="list-row project-select-row"
+                  type="button"
+                  onClick={() => setSelectedProjectId(project.id)}
+                >
+                  <strong>{project.name}</strong>
+                  <span>
+                    {project.default_branch ??
+                      project.default_cwd ??
+                      shortId(project.id)}
+                  </span>
+                </button>
+                <button
+                  className="icon-button"
+                  type="button"
+                  title={`New thread in ${project.name}`}
+                  aria-label={`New thread in ${project.name}`}
+                  onClick={() => void handleCreateThread(project.id)}
+                  disabled={
+                    creatingThreadProjectId !== null ||
+                    (project.id === selectedProjectId &&
+                      (loadingWorkspaces || workspaces.length === 0))
+                  }
+                >
+                  +
+                </button>
+              </div>
             ))}
             {!loadingProjects && projects.length === 0 ? (
               <p className="empty">No projects returned.</p>
@@ -1519,67 +1254,14 @@ function App() {
           </div>
         </aside>
 
-        <aside className="panel session-panel" aria-label="Sessions">
+        <aside className="panel session-panel" aria-label="Threads">
           <div className="panel-heading">
             <div>
-              <h2>Sessions</h2>
+              <h2>Threads</h2>
               <p>{selectedProject?.name ?? "Select a project"}</p>
             </div>
             <span>{loadingSessions ? "Loading" : sessions.length}</span>
           </div>
-          <section className="run-group-block" aria-label="Run groups">
-            <div className="section-heading compact-heading">
-              <h3>Run Groups</h3>
-              <span>{loadingRunGroups ? "Loading" : runGroups.length}</span>
-            </div>
-            <div className="run-group-list">
-              {runGroups.map((runGroup) => (
-                <button
-                  className={`run-group-chip ${runGroup.id === selectedRunGroupId && activeDetail === "run_group" ? "is-active" : ""}`}
-                  key={runGroup.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedRunGroupId(runGroup.id);
-                    setActiveDetail("run_group");
-                  }}
-                >
-                  <strong>{runGroup.name}</strong>
-                  <span>{runGroup.purpose ?? shortId(runGroup.id)}</span>
-                </button>
-              ))}
-              {!loadingRunGroups &&
-              selectedProjectId &&
-              runGroups.length === 0 ? (
-                <p className="empty compact-empty">No run groups.</p>
-              ) : null}
-            </div>
-          </section>
-          <section className="start-session-block" aria-label="Start session">
-            <div className="section-heading compact-heading">
-              <h3>Start Session</h3>
-              <span>
-                {loadingWorkspaces
-                  ? "Loading workspaces"
-                  : `${workspaces.length} workspaces`}
-              </span>
-            </div>
-            <SessionDraftForm
-              idPrefix="start-session"
-              draft={createDraft}
-              workspaces={workspaces}
-              disabled={
-                !selectedProjectId || loadingWorkspaces || submittingStart
-              }
-              submitting={submittingStart}
-              submitDisabled={createSubmitDisabled}
-              submitLabel="Start"
-              submittingLabel="Starting"
-              validationMessages={createValidationMessages}
-              error={createSessionError}
-              onDraftChange={setCreateDraft}
-              onSubmit={handleStartSession}
-            />
-          </section>
           <div className="list session-list">
             {sessions.map((session) => (
               <button
@@ -1593,18 +1275,17 @@ function App() {
               >
                 <span className="row-topline">
                   <strong>{shortId(session.id)}</strong>
-                  <span className={statusClass(session.status)}>
-                    {session.status.replace("_", " ")}
-                  </span>
                 </span>
                 <span className="message-preview">
-                  {compactText(session.last_agent_message)}
+                  {isEmptyThreadSession(session)
+                    ? "New thread"
+                    : compactText(session.last_agent_message)}
                 </span>
                 <span>Updated {formatDate(session.updated_at)}</span>
               </button>
             ))}
             {!loadingSessions && selectedProjectId && sessions.length === 0 ? (
-              <p className="empty">No sessions returned.</p>
+              <p className="empty">No threads returned.</p>
             ) : null}
           </div>
         </aside>
@@ -1612,20 +1293,18 @@ function App() {
         <section
           className="panel detail-panel"
           aria-label={
-            activeDetail === "run_group" ? "Run group detail" : "Session detail"
+            activeDetail === "run_group" ? "Run group detail" : "Thread detail"
           }
         >
           <div className="panel-heading detail-heading">
             <div>
-              <h2>
-                {activeDetail === "run_group" ? "Run Group" : "Session Detail"}
-              </h2>
+              <h2>{activeDetail === "run_group" ? "Run Group" : "Thread"}</h2>
               <p>
                 {activeDetail === "run_group"
                   ? (selectedRunGroup?.name ?? "Select a run group")
                   : selectedSession
                     ? shortId(selectedSession.id)
-                    : "Select a session"}
+                    : "Select a thread"}
               </p>
             </div>
             {activeDetail === "run_group" && selectedRunGroup ? (
@@ -1633,10 +1312,6 @@ function App() {
                 {loadingRunGroupDetail
                   ? "Loading"
                   : `${runGroupCounts.attention} attention`}
-              </span>
-            ) : selectedSession ? (
-              <span className={statusClass(selectedSession.status)}>
-                {selectedSession.status.replace("_", " ")}
               </span>
             ) : null}
           </div>
@@ -1675,24 +1350,12 @@ function App() {
                   </div>
                   <dl className="session-meta-list">
                     <div>
-                      <dt>Ref</dt>
-                      <dd>{taskSpec?.ref ?? "snapshot"}</dd>
-                    </div>
-                    <div>
                       <dt>Workspace</dt>
                       <dd>{shortId(selectedSession.workspace_id)}</dd>
                     </div>
                     <div>
-                      <dt>Thread</dt>
-                      <dd>{shortId(selectedSession.codex_thread_id)}</dd>
-                    </div>
-                    <div>
-                      <dt>PID</dt>
-                      <dd>{selectedSession.process_pid ?? "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>Items</dt>
-                      <dd>{selectedSession.last_item_sequence}</dd>
+                      <dt>Ref</dt>
+                      <dd>{taskSpec?.ref ?? "snapshot"}</dd>
                     </div>
                     <div>
                       <dt>Updated</dt>
@@ -1704,19 +1367,12 @@ function App() {
 
               <section
                 className="conversation-shell"
-                aria-label="Session conversation"
+                aria-label="Thread conversation"
               >
                 <div className="section-heading conversation-heading">
                   <div>
                     <h3>Conversation</h3>
-                    <p>
-                      {transcriptWindowLabel(
-                        transcriptEntries,
-                        transcriptCursor,
-                      )}
-                      ; fetched {TRANSCRIPT_FETCH_LIMIT}, showing up to{" "}
-                      {VISIBLE_TRANSCRIPT_LIMIT}
-                    </p>
+                    <p>{conversationPageLabel(transcriptEntries)}</p>
                   </div>
                   <div className="item-controls">
                     <label className="toggle-label">
@@ -1833,7 +1489,9 @@ function App() {
                     {!loadingDetail &&
                     conversationTranscriptEntries.length === 0 ? (
                       <p className="empty">
-                        No complete conversation entries in this page.
+                        {selectedThreadIsEmpty
+                          ? "Start this thread with the composer below."
+                          : "No complete conversation entries in this page."}
                       </p>
                     ) : null}
                   </div>
@@ -1927,71 +1585,49 @@ function App() {
 
               <section
                 className="composer composer-bottom"
-                aria-label="Send session message"
+                aria-label="Send thread message"
               >
                 <textarea
+                  ref={composerRef}
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Write a steer or continue instruction..."
+                  placeholder="Message this thread..."
                   rows={3}
                 />
                 <div className="action-row">
                   <button
                     className="button"
                     type="button"
-                    onClick={() => void handleSend("steer")}
-                    disabled={actionAvailability?.steer.disabled ?? true}
-                    aria-describedby={
-                      actionAvailability?.steer.disabled
-                        ? actionHelpId
-                        : undefined
-                    }
-                  >
-                    Send Steer
-                  </button>
-                  <button
-                    className="button button-secondary"
-                    type="button"
                     onClick={() => void handleSend("continue")}
-                    disabled={actionAvailability?.continue.disabled ?? true}
+                    disabled={!canSendSelectedThread}
                     aria-describedby={
+                      !selectedThreadIsEmpty &&
                       actionAvailability?.continue.disabled
                         ? actionHelpId
                         : undefined
                     }
                   >
-                    Continue
+                    Send
                   </button>
-                  <button
-                    className="button button-danger"
-                    type="button"
-                    onClick={() => void handleAction("stop")}
-                    disabled={actionAvailability?.stop.disabled ?? true}
-                    aria-describedby={
-                      actionAvailability?.stop.disabled
-                        ? actionHelpId
-                        : undefined
-                    }
-                  >
-                    Stop
-                  </button>
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    onClick={() => void handleAction("complete")}
-                    disabled={actionAvailability?.complete.disabled ?? true}
-                    aria-describedby={
-                      actionAvailability?.complete.disabled
-                        ? actionHelpId
-                        : undefined
-                    }
-                  >
-                    Complete
-                  </button>
+                  {!selectedThreadIsEmpty ? (
+                    <button
+                      className="button button-secondary"
+                      type="button"
+                      onClick={() => void handleSend("steer")}
+                      disabled={actionAvailability?.steer.disabled ?? true}
+                      aria-describedby={
+                        actionAvailability?.steer.disabled
+                          ? actionHelpId
+                          : undefined
+                      }
+                    >
+                      Steer
+                    </button>
+                  ) : null}
                 </div>
-                {actionAvailability && disabledActions.length > 0 ? (
+                {actionAvailability && disabledComposerActions.length > 0 ? (
                   <dl className="action-help" id="session-action-help">
-                    {disabledActions.map((action) => (
+                    {disabledComposerActions.map((action) => (
                       <div key={action}>
                         <dt>{actionAvailability[action].label}</dt>
                         <dd>{actionAvailability[action].reasons.join(" ")}</dd>
@@ -1999,37 +1635,10 @@ function App() {
                     ))}
                   </dl>
                 ) : null}
-                {followUpAvailable ? (
-                  <section
-                    className="follow-up-block"
-                    aria-label="Start follow-up session"
-                  >
-                    <div className="section-heading compact-heading">
-                      <h3>Follow-up</h3>
-                      <span>
-                        Source is {statusLabel(selectedSession.status)}
-                      </span>
-                    </div>
-                    <SessionDraftForm
-                      idPrefix={`follow-up-${selectedSession.id}`}
-                      draft={followUpDraft}
-                      workspaces={workspaces}
-                      disabled={loadingWorkspaces || submittingFollowUp}
-                      submitting={submittingFollowUp}
-                      submitDisabled={followUpSubmitDisabled}
-                      submitLabel="Start Follow-up"
-                      submittingLabel="Starting Follow-up"
-                      validationMessages={followUpValidationMessages}
-                      error={followUpError}
-                      onDraftChange={setFollowUpDraft}
-                      onSubmit={handleStartFollowUp}
-                    />
-                  </section>
-                ) : null}
               </section>
             </>
           ) : (
-            <p className="empty detail-empty">No session selected.</p>
+            <p className="empty detail-empty">No thread selected.</p>
           )}
         </section>
       </section>

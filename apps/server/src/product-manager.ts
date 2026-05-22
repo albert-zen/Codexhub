@@ -3,10 +3,16 @@ import type {
   MessageMode,
   SenderType,
   TaskSpecMetadata,
+  ThreadSummary,
   WorkerSession,
   Workspace,
 } from "@codexhub/core";
-import { canStartFollowUpSession, isTerminalStatus } from "@codexhub/core";
+import {
+  canSendMessage,
+  canStartFollowUpSession,
+  isTerminalStatus,
+  toThreadSummary,
+} from "@codexhub/core";
 import { type CreateTaskSpecInput, type HubRepository } from "./repository.js";
 import {
   SessionProcessUnavailableError,
@@ -44,6 +50,15 @@ export interface SendWorkerMessageCommand {
   content: string;
   senderType: SenderType;
   senderId?: string | null;
+  idempotencyKey?: string | null;
+  keepThreadReadableOnRuntimeUnavailable?: boolean;
+  ensureRuntimeReady?: boolean;
+}
+
+export interface CreateThreadCommand {
+  projectId: string;
+  workspaceId: string;
+  idempotencyKey?: string | null;
 }
 
 export interface StartWorkerResult {
@@ -62,6 +77,13 @@ export interface StartFollowUpWorkerResult {
 export interface SendWorkerMessageResult {
   message: Message;
   session: WorkerSession;
+  thread?: ThreadSummary;
+}
+
+export interface CreateThreadResult {
+  thread: ThreadSummary;
+  session: WorkerSession;
+  workspace: Workspace;
 }
 
 export class ProductManagerError extends Error {
@@ -77,6 +99,7 @@ export class ProductManagerError extends Error {
 export class ProductManager {
   private readonly repo: HubRepository;
   private readonly runtime: CodexRuntimeController;
+  private readonly inFlightSends = new Set<string>();
 
   constructor(dependencies: ProductManagerDependencies) {
     this.repo = dependencies.repo;
@@ -121,6 +144,36 @@ export class ProductManager {
       codexOptions: command.codexOptions ?? project.default_codex_options,
     });
     return { session: started, workspace };
+  }
+
+  async createThread(
+    command: CreateThreadCommand,
+  ): Promise<CreateThreadResult> {
+    const project = this.repo.getProject(command.projectId);
+    if (!project) {
+      throw new ProductManagerError("project_not_found", "project not found");
+    }
+
+    const workspace = this.repo.getWorkspace(command.workspaceId);
+    if (!workspace) {
+      throw new ProductManagerError(
+        "workspace_not_found",
+        "workspace not found",
+      );
+    }
+    if (workspace.project_id !== project.id) {
+      throw new ProductManagerError(
+        "workspace_project_mismatch",
+        "thread workspace must belong to the project",
+      );
+    }
+
+    const session = this.repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+      idempotency_key: command.idempotencyKey ?? null,
+    });
+    return { thread: toThreadSummary(session), session, workspace };
   }
 
   async startFollowUpWorker(
@@ -201,24 +254,149 @@ export class ProductManager {
         "workspace not found",
       );
     }
-    if (isTerminalStatus(session.status)) {
+    const canResumeTerminalThread =
+      command.ensureRuntimeReady === true &&
+      command.mode === "continue" &&
+      session.codex_thread_id !== null;
+    if (isTerminalStatus(session.status) && !canResumeTerminalThread) {
       throw new ProductManagerError(
         "session_terminal",
         `session is ${session.status}`,
       );
     }
 
-    if (command.mode === "steer" && command.content.trim() === "") {
+    if (command.content.trim() === "") {
       throw new ProductManagerError(
         "message_required",
-        "steer content is required",
+        "thread message content is required",
       );
     }
-    if (command.mode === "continue" && command.content.trim() === "") {
-      throw new ProductManagerError(
-        "message_required",
-        "continue content is required",
+
+    if (command.idempotencyKey) {
+      const existing = this.repo.getMessageByIdempotencyKey(
+        session.id,
+        command.idempotencyKey,
       );
+      if (existing) {
+        if (
+          existing.status === "failed" &&
+          command.keepThreadReadableOnRuntimeUnavailable
+        ) {
+          this.repo.deleteMessageIdempotencyKey(
+            session.id,
+            command.idempotencyKey,
+          );
+        } else {
+          return {
+            message: existing,
+            session,
+            thread: toThreadSummary(session),
+          };
+        }
+      }
+    }
+
+    if (isThreadTurnInProgress(command, session)) {
+      throw new ProductManagerError(
+        "thread_turn_in_progress",
+        "thread already has a turn in progress",
+        { session_id: session.id },
+      );
+    }
+
+    if (isUnsupportedThreadSend(command, session)) {
+      throw new ProductManagerError(
+        "thread_not_ready",
+        `thread is ${session.status}`,
+        { session_id: session.id },
+      );
+    }
+
+    if (command.idempotencyKey) {
+      const existing = this.repo.getMessageByIdempotencyKey(
+        session.id,
+        command.idempotencyKey,
+      );
+      if (existing) {
+        return {
+          message: existing,
+          session,
+          thread: toThreadSummary(session),
+        };
+      }
+    }
+
+    if (this.inFlightSends.has(session.id)) {
+      throw new ProductManagerError(
+        "thread_turn_in_progress",
+        "thread already has a turn in progress",
+        { session_id: session.id },
+      );
+    }
+
+    this.inFlightSends.add(session.id);
+    try {
+      return await this.sendWorkerMessageAfterGuard(
+        command,
+        session,
+        workspace,
+      );
+    } finally {
+      this.inFlightSends.delete(session.id);
+    }
+  }
+
+  private async sendWorkerMessageAfterGuard(
+    command: SendWorkerMessageCommand,
+    session: WorkerSession,
+    workspace: Workspace,
+  ): Promise<SendWorkerMessageResult> {
+    if (isEmptyThreadSession(session)) {
+      const project = this.repo.getProject(session.project_id);
+      if (!project) {
+        throw new ProductManagerError("project_not_found", "project not found");
+      }
+      const message = this.repo.createMessage({
+        session_id: session.id,
+        mode: "initial",
+        content: command.content,
+        sender_type: command.senderType,
+        sender_id: command.senderId ?? null,
+        idempotency_key: command.idempotencyKey ?? null,
+      });
+      let started: WorkerSession;
+      try {
+        started = await this.runtime.startSession(session, workspace, {
+          initialMessage: message,
+          codexOptions: project.default_codex_options,
+        });
+      } catch (error) {
+        if (command.keepThreadReadableOnRuntimeUnavailable) {
+          const failure =
+            error instanceof Error ? error : new Error(String(error));
+          persistUnavailableSend(this.repo, session, message.id, {
+            failureReason: failure.message,
+          });
+          throw new ProductManagerError(
+            "session_process_unavailable",
+            failure.message,
+            {
+              session_id: session.id,
+              follow_up_available: false,
+              retryable: true,
+            },
+          );
+        }
+        throw error;
+      }
+      return {
+        message:
+          this.repo
+            .listMessages(session.id)
+            .find((entry) => entry.id === message.id) ?? message,
+        session: started,
+        thread: toThreadSummary(started),
+      };
     }
 
     const message = this.repo.createMessage({
@@ -227,22 +405,100 @@ export class ProductManager {
       content: command.content,
       sender_type: command.senderType,
       sender_id: command.senderId ?? null,
+      idempotency_key: command.idempotencyKey ?? null,
     });
 
     let updatedSession: WorkerSession;
+    let runtimeSession = session;
+    let attemptedResumeBeforeSend = false;
     try {
-      updatedSession = await this.runtime.sendMessage(session, workspace, {
-        message,
-      });
+      if (command.ensureRuntimeReady) {
+        if (await this.runtime.hasLiveSession(session)) {
+          runtimeSession = session;
+        } else if (session.codex_thread_id) {
+          attemptedResumeBeforeSend = true;
+          runtimeSession = await this.resumeRuntimeSession(session, workspace);
+        }
+      }
+      updatedSession = await this.runtime.sendMessage(
+        runtimeSession,
+        workspace,
+        {
+          message,
+        },
+      );
     } catch (error) {
       if (error instanceof SessionProcessUnavailableError) {
-        persistUnavailableSession(this.repo, error.sessionId, message.id, {
-          failureReason: error.message,
+        if (!command.ensureRuntimeReady) {
+          persistUnavailableSession(this.repo, error.sessionId, message.id, {
+            failureReason: error.message,
+          });
+          throw new ProductManagerError(error.code, error.message, {
+            session_id: error.sessionId,
+            follow_up_available: true,
+          });
+        }
+        if (attemptedResumeBeforeSend) {
+          if (command.keepThreadReadableOnRuntimeUnavailable) {
+            persistUnavailableSend(this.repo, session, message.id, {
+              failureReason: error.message,
+            });
+          } else {
+            persistUnavailableSession(this.repo, error.sessionId, message.id, {
+              failureReason: error.message,
+            });
+          }
+          throw new ProductManagerError(error.code, error.message, {
+            session_id: error.sessionId,
+            follow_up_available:
+              command.keepThreadReadableOnRuntimeUnavailable !== true,
+            retryable: command.keepThreadReadableOnRuntimeUnavailable === true,
+          });
+        }
+        try {
+          runtimeSession = await this.resumeRuntimeSession(session, workspace);
+          updatedSession = await this.runtime.sendMessage(
+            runtimeSession,
+            workspace,
+            { message },
+          );
+        } catch (resumeError) {
+          const failure = resumeError instanceof Error ? resumeError : error;
+          if (command.keepThreadReadableOnRuntimeUnavailable) {
+            persistUnavailableSend(this.repo, session, message.id, {
+              failureReason: failure.message,
+            });
+          } else {
+            persistUnavailableSession(this.repo, error.sessionId, message.id, {
+              failureReason: failure.message,
+            });
+          }
+          throw new ProductManagerError(error.code, failure.message, {
+            session_id: error.sessionId,
+            follow_up_available:
+              command.keepThreadReadableOnRuntimeUnavailable !== true,
+            retryable: command.keepThreadReadableOnRuntimeUnavailable === true,
+          });
+        }
+      }
+      if (
+        command.ensureRuntimeReady &&
+        command.keepThreadReadableOnRuntimeUnavailable
+      ) {
+        const failure =
+          error instanceof Error ? error : new Error(String(error));
+        persistUnavailableSend(this.repo, session, message.id, {
+          failureReason: failure.message,
         });
-        throw new ProductManagerError(error.code, error.message, {
-          session_id: error.sessionId,
-          follow_up_available: true,
-        });
+        throw new ProductManagerError(
+          "session_process_unavailable",
+          failure.message,
+          {
+            session_id: session.id,
+            follow_up_available: false,
+            retryable: true,
+          },
+        );
       }
       throw error;
     }
@@ -254,6 +510,19 @@ export class ProductManager {
           .find((entry) => entry.id === message.id) ?? message,
       session: updatedSession,
     };
+  }
+
+  private async resumeRuntimeSession(
+    session: WorkerSession,
+    workspace: Workspace,
+  ): Promise<WorkerSession> {
+    const project = this.repo.getProject(session.project_id);
+    if (!project) {
+      throw new ProductManagerError("project_not_found", "project not found");
+    }
+    return this.runtime.resumeSession(session, workspace, {
+      codexOptions: project.default_codex_options,
+    });
   }
 
   async stopWorker(sessionReference: string): Promise<WorkerSession> {
@@ -283,6 +552,37 @@ export class ProductManager {
   }
 }
 
+function isEmptyThreadSession(session: WorkerSession): boolean {
+  return (
+    session.status === "starting" &&
+    session.started_at === null &&
+    session.last_item_sequence === 0 &&
+    session.last_agent_message === null
+  );
+}
+
+function isThreadTurnInProgress(
+  command: SendWorkerMessageCommand,
+  session: WorkerSession,
+): boolean {
+  return (
+    command.ensureRuntimeReady === true &&
+    command.mode === "continue" &&
+    (session.status === "starting" || session.status === "running") &&
+    !isEmptyThreadSession(session)
+  );
+}
+
+function isUnsupportedThreadSend(
+  command: SendWorkerMessageCommand,
+  session: WorkerSession,
+): boolean {
+  if (command.ensureRuntimeReady !== true) return false;
+  if (isEmptyThreadSession(session)) return false;
+  if (canSendMessage(session.status, command.mode)) return false;
+  return !(command.mode === "continue" && session.codex_thread_id !== null);
+}
+
 function requirePrompt(prompt: string | null | undefined): string {
   if (prompt && prompt.trim() !== "") return prompt;
   throw new ProductManagerError(
@@ -303,6 +603,25 @@ function persistUnavailableSession(
     failure_reason: options.failureReason,
     process_pid: null,
     ended_at: new Date().toISOString(),
+  });
+}
+
+function persistUnavailableSend(
+  repo: HubRepository,
+  session: WorkerSession,
+  messageId: string,
+  options: { failureReason: string },
+): void {
+  repo.markMessageFailed(messageId, options.failureReason);
+  repo.updateSession(session.id, {
+    status: session.status,
+    codex_thread_id: session.codex_thread_id,
+    codex_turn_id: session.codex_turn_id,
+    codex_session_key: session.codex_session_key,
+    failure_reason: null,
+    process_pid: null,
+    started_at: session.started_at,
+    ended_at: session.ended_at,
   });
 }
 

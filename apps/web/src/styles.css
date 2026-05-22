@@ -167,6 +167,55 @@ button:disabled {
   box-shadow: inset 3px 0 0 #276db6;
 }
 
+.project-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  align-items: stretch;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.project-row-shell .list-row {
+  border-bottom: 0;
+}
+
+.project-row-shell.is-active {
+  background: #e9f3ff;
+  box-shadow: inset 3px 0 0 #276db6;
+}
+
+.project-row-shell.is-active .list-row {
+  background: transparent;
+}
+
+.project-select-row {
+  min-height: 72px;
+  padding-left: 14px;
+}
+
+.icon-button {
+  align-self: center;
+  justify-self: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #c5d0d9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #276db6;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.icon-button:hover:not(:disabled) {
+  border-color: #276db6;
+  background: #f1f7fd;
+}
+
+.icon-button:disabled {
+  background: #edf1f4;
+  color: #98a2aa;
+}
+
 .list-row strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1183,23 +1232,25 @@ pre {
   }
 
   .workspace-grid {
+    grid-template-rows: auto auto minmax(0, 1fr);
     grid-template-columns: 1fr;
     overflow: auto;
+    min-height: 0;
   }
 
   .project-panel .list {
-    max-height: 220px;
+    max-height: 128px;
   }
 
   .session-panel .list {
-    max-height: 340px;
+    max-height: 156px;
   }
 
   .detail-panel {
     grid-column: auto;
     overflow: hidden;
-    height: calc(100vh - 24px);
-    max-height: calc(100vh - 24px);
+    height: auto;
+    max-height: none;
     min-height: 0;
   }
 
@@ -1235,7 +1286,7 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .button {
+  .composer .button {
     flex: 1 1 120px;
   }
 }
@@ -1266,13 +1317,22 @@ pre {
     flex-direction: column;
   }
 
+  .conversation-heading {
+    flex-direction: row;
+  }
+
   .field-grid {
     grid-template-columns: 1fr;
   }
 
   .item-controls {
-    align-items: stretch;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
     width: 100%;
+  }
+
+  .item-controls .button {
+    flex: 0 0 auto;
   }
 }

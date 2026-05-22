@@ -199,6 +199,365 @@ describe("Codexhub API", () => {
     expect(invalidReviewStatus.json().error.code).toBe("invalid_review_status");
   });
 
+  it("creates empty project-scoped threads without starting runtime work", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "thread-demo",
+      default_workspace_root: tempDir,
+    });
+    const workspace = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-demo-workspace"),
+    });
+
+    const created = await post(
+      `/api/v1/projects/${project.project.id}/threads`,
+      {
+        workspace_id: workspace.workspace.id,
+        idempotency_key: "create-thread-key",
+      },
+    );
+    const retried = await post(
+      `/api/v1/projects/${project.project.id}/threads`,
+      {
+        workspace_id: workspace.workspace.id,
+        idempotency_key: "create-thread-key",
+      },
+    );
+
+    expect(created.thread).toMatchObject({
+      id: created.thread.session_id,
+      project_id: project.project.id,
+      workspace_id: workspace.workspace.id,
+      thread_state: "empty",
+      conversation_state: "ready",
+    });
+    expect(retried.thread.id).toBe(created.thread.id);
+
+    const listed = await get(`/api/v1/projects/${project.project.id}/threads`);
+    expect(listed.threads).toHaveLength(1);
+    expect(listed.threads[0].id).toBe(created.thread.id);
+  });
+
+  it("preserves empty project-scoped threads across API server restart", async () => {
+    await app.close();
+    const dbPath = join(tempDir, "empty-thread-restart.sqlite");
+    app = await createServer({ dbPath, logger: false });
+
+    const project = await post("/api/v1/projects", {
+      name: "thread-restart-demo",
+      default_workspace_root: tempDir,
+    });
+    const workspace = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-restart-workspace"),
+    });
+    const created = await post(
+      `/api/v1/projects/${project.project.id}/threads`,
+      {
+        workspace_id: workspace.workspace.id,
+      },
+    );
+    expect(created.thread).toMatchObject({
+      thread_state: "empty",
+      runtime_state: "notStarted",
+    });
+
+    await app.close();
+    app = await createServer({ dbPath, logger: false });
+
+    const inspected = await get(`/api/v1/threads/${created.thread.id}`);
+    expect(inspected.thread).toMatchObject({
+      id: created.thread.id,
+      thread_state: "empty",
+      conversation_state: "ready",
+      runtime_state: "notStarted",
+    });
+    expect(inspected.session).toMatchObject({
+      status: "starting",
+      process_pid: null,
+      failure_reason: null,
+      started_at: null,
+      ended_at: null,
+    });
+  });
+
+  it("starts runtime automatically when sending the first message to an empty thread", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "thread-send-demo",
+      default_workspace_root: tempDir,
+      default_codex_options: { fake: true },
+    });
+    const workspace = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-send-workspace"),
+    });
+    const created = await post(
+      `/api/v1/projects/${project.project.id}/threads`,
+      {
+        workspace_id: workspace.workspace.id,
+      },
+    );
+
+    const sent = await post(`/api/v1/threads/${created.thread.id}/messages`, {
+      content: "Inspect the project and report status.",
+      sender_type: "manager_agent",
+      idempotency_key: "first-thread-send",
+      wait: "turn-complete",
+      timeout: "5s",
+    });
+    const retried = await post(
+      `/api/v1/threads/${created.thread.id}/messages`,
+      {
+        content: "Inspect the project and report status.",
+        sender_type: "manager_agent",
+        idempotency_key: "first-thread-send",
+      },
+    );
+
+    expect(sent.message).toMatchObject({
+      mode: "initial",
+      status: "sent",
+      content: "Inspect the project and report status.",
+    });
+    expect(retried.message.id).toBe(sent.message.id);
+    expect(sent.thread).toMatchObject({
+      id: created.thread.id,
+      thread_state: "active",
+      conversation_state: "ready",
+    });
+    expect(sent.session.status).toBe("awaiting_input");
+    expect(sent.wait).toBe("turn-complete");
+    expect(sent.session.last_agent_message).toContain("Inspect the project");
+    const messages = await get(
+      `/api/v1/sessions/${created.thread.id}/messages`,
+    );
+    expect(messages.messages).toHaveLength(1);
+  });
+
+  it("keeps an empty thread retryable when first runtime start is unavailable", async () => {
+    await app.close();
+    const dbPath = join(tempDir, "thread-first-send-unavailable.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({
+      name: "thread-first-send-unavailable",
+    });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-first-send-unavailable-workspace"),
+      cwd: join(tempDir, "thread-first-send-unavailable-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    database.close();
+
+    const unavailableOnStartSessionIds = new Set([session.id]);
+    app = await createServer({
+      dbPath,
+      logger: false,
+      runtimeFactory: (runtimeRepo) =>
+        new RegistryRuntime(runtimeRepo, new Set(), {
+          unavailableOnStartSessionIds,
+        }),
+    });
+
+    const failed = await app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${session.id}/messages`,
+      payload: {
+        content: "Start the thread.",
+        sender_type: "manager_agent",
+        idempotency_key: "start-retry-key",
+      },
+    });
+    expect(failed.statusCode).toBe(409);
+    expect(failed.json().error).toMatchObject({
+      code: "session_process_unavailable",
+      session_id: session.id,
+      retryable: true,
+      follow_up_available: false,
+    });
+
+    const inspected = await get(`/api/v1/threads/${session.id}`);
+    expect(inspected.thread).toMatchObject({
+      thread_state: "empty",
+      runtime_state: "notStarted",
+    });
+    expect(inspected.session).toMatchObject({
+      status: "starting",
+      codex_thread_id: null,
+      process_pid: null,
+      failure_reason: null,
+      started_at: null,
+      ended_at: null,
+    });
+
+    const context = await get(`/api/v1/threads/${session.id}/context`);
+    expect(context.thread).toMatchObject({
+      thread_state: "empty",
+      conversation_state: "failedToSend",
+    });
+    expect(context.attention_reasons).toContain("failed_to_send");
+    expect(context.transcript[0]).toMatchObject({
+      message_status: "failed",
+      text: "Start the thread.",
+    });
+
+    unavailableOnStartSessionIds.delete(session.id);
+    const retried = await app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${session.id}/messages`,
+      payload: {
+        content: "Retry the thread.",
+        sender_type: "manager_agent",
+        idempotency_key: "start-retry-key",
+      },
+    });
+    expect(retried.statusCode).toBe(200);
+    expect(retried.json()).toMatchObject({
+      message: {
+        mode: "initial",
+        status: "sent",
+        content: "Retry the thread.",
+      },
+    });
+  });
+
+  it("rejects empty thread messages even when clients request initial mode", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "thread-empty-message",
+      default_workspace_root: tempDir,
+    });
+    const workspace = await post("/api/v1/workspaces", {
+      project_id: project.project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-empty-message-workspace"),
+    });
+    const created = await post(
+      `/api/v1/projects/${project.project.id}/threads`,
+      {
+        workspace_id: workspace.workspace.id,
+      },
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/threads/${created.thread.id}/messages`,
+      payload: {
+        mode: "initial",
+        content: "",
+        sender_type: "human",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toMatchObject({
+      code: "message_required",
+    });
+
+    const messages = await get(
+      `/api/v1/sessions/${created.thread.id}/messages`,
+    );
+    expect(messages.messages).toHaveLength(0);
+  });
+
+  it("returns a compact thread context window for manager agents", async () => {
+    const project = await post("/api/v1/projects", {
+      name: "thread-context-demo",
+      default_workspace_root: tempDir,
+    });
+    const started = await createFakeSession(
+      project.project.id,
+      "thread-context-workspace",
+    );
+    const sessionId = started.session.id;
+
+    const context = await get(
+      `/api/v1/threads/${sessionId}/context?limit=10&tools=collapsed`,
+    );
+
+    expect(context.thread).toMatchObject({
+      id: sessionId,
+      thread_state: "active",
+    });
+    expect(context.latest_agent_message).toContain(
+      "Inspect thread-context-workspace",
+    );
+    expect(context.allowed_actions).toContain("send");
+    expect(context.transcript.length).toBeGreaterThan(0);
+    expect(context.tool_calls).toEqual([]);
+  });
+
+  it("can expand thread tool calls to raw item details", async () => {
+    await app.close();
+    const dbPath = join(tempDir, "thread-tool-calls.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "thread-tool-demo" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-tool-workspace"),
+      cwd: join(tempDir, "thread-tool-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, { status: "awaiting_input" });
+    const call = repo.appendItem(session.id, {
+      method: "item/tool/call",
+      params: {
+        item: {
+          id: "tool-expanded",
+          type: "toolCall",
+          text: "pnpm test",
+        },
+      },
+    });
+    const result = repo.appendItem(session.id, {
+      method: "item/tool/result",
+      params: {
+        item: {
+          id: "tool-expanded",
+          type: "toolResult",
+          text: "passed",
+        },
+      },
+    });
+    database.close();
+
+    app = await createServer({ dbPath, logger: false });
+    const collapsed = await get(
+      `/api/v1/threads/${session.id}/tool-calls?tools=collapsed`,
+    );
+    expect(collapsed.tool_calls[0]).toMatchObject({
+      id: "tool-expanded",
+      item_ids: [call.id, result.id],
+      item_sequences: [call.sequence, result.sequence],
+    });
+    expect(collapsed.tool_calls[0].items).toBeUndefined();
+
+    const expanded = await get(
+      `/api/v1/threads/${session.id}/tool-calls?tools=expanded`,
+    );
+    expect(
+      expanded.tool_calls[0].items.map((item: { id: string }) => item.id),
+    ).toEqual([call.id, result.id]);
+
+    const hidden = await get(
+      `/api/v1/threads/${session.id}/tool-calls?tools=hidden`,
+    );
+    expect(hidden.tool_calls).toEqual([]);
+    expect(hidden.items).toEqual([]);
+  });
+
   it("resolves unique short session prefixes and returns canonical ids", async () => {
     const project = await post("/api/v1/projects", {
       name: "prefix-demo",
@@ -2085,6 +2444,107 @@ describe("Codexhub API", () => {
     }
   });
 
+  it("keeps thread lifecycle readable when runtime ownership is unavailable", async () => {
+    const dbPath = join(tempDir, "thread-send-unavailable.sqlite");
+    const database = openDatabase({ path: dbPath });
+    const repo = new HubRepository(database.db);
+    const project = repo.createProject({ name: "thread-send-unavailable" });
+    const workspace = repo.createWorkspace({
+      project_id: project.id,
+      source_type: "local",
+      path: join(tempDir, "thread-send-unavailable-workspace"),
+      cwd: join(tempDir, "thread-send-unavailable-workspace"),
+    });
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-readable",
+      codex_turn_id: "turn-readable",
+      codex_session_key: "thread-readable-turn-readable",
+      process_pid: "runtime-that-disappeared",
+    });
+    database.close();
+
+    const liveSessionIds = new Set([session.id]);
+    const unavailableOnSendSessionIds = new Set([session.id]);
+    const restarted = await createServer({
+      dbPath,
+      logger: false,
+      runtimeFactory: (runtimeRepo) =>
+        new RegistryRuntime(runtimeRepo, liveSessionIds, {
+          unavailableOnSendSessionIds,
+        }),
+    });
+    try {
+      const response = await restarted.inject({
+        method: "POST",
+        url: `/api/v1/threads/${session.id}/messages`,
+        payload: {
+          content: "Try to continue without a visible resume button.",
+          sender_type: "manager_agent",
+        },
+      });
+
+      const body = response.json();
+      expect(response.statusCode).toBe(409);
+      expect(body.error).toMatchObject({
+        code: "session_process_unavailable",
+        session_id: session.id,
+        retryable: true,
+      });
+
+      const inspected = await getFrom(
+        restarted,
+        `/api/v1/threads/${session.id}`,
+      );
+      expect(inspected.thread).toMatchObject({
+        id: session.id,
+        thread_state: "active",
+        conversation_state: "ready",
+      });
+      expect(inspected.session).toMatchObject({
+        status: "awaiting_input",
+        process_pid: null,
+        ended_at: null,
+      });
+
+      const messages = await getFrom(
+        restarted,
+        `/api/v1/sessions/${session.id}/messages`,
+      );
+      expect(messages.messages).toHaveLength(1);
+      expect(messages.messages[0]).toMatchObject({
+        mode: "continue",
+        status: "failed",
+        error: expect.stringContaining("live Codex app-server process"),
+      });
+
+      const context = await getFrom(
+        restarted,
+        `/api/v1/threads/${session.id}/context`,
+      );
+      expect(context.thread).toMatchObject({
+        id: session.id,
+        conversation_state: "failedToSend",
+      });
+      expect(context.attention_reasons).toContain("failed_to_send");
+      expect(context.transcript).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source_id: messages.messages[0].id,
+            message_status: "failed",
+            text: "Try to continue without a visible resume button.",
+          }),
+        ]),
+      );
+    } finally {
+      await restarted.close();
+    }
+  });
+
   it("continues a fake session through an external runtime supervisor across API server restart", async () => {
     const dbPath = join(tempDir, "external-runtime-supervisor.sqlite");
     const supervisor = await createRuntimeSupervisorServer({
@@ -2435,6 +2895,7 @@ class RegistryRuntime implements CodexRuntimeController {
     private readonly repo: HubRepository,
     private readonly liveSessionIds: Set<string>,
     private readonly options: {
+      unavailableOnStartSessionIds?: Set<string>;
       unavailableOnSendSessionIds?: Set<string>;
     } = {},
   ) {}
@@ -2446,8 +2907,19 @@ class RegistryRuntime implements CodexRuntimeController {
   async startSession(
     session: WorkerSession,
     _workspace: Workspace,
-    _options: StartOptions,
+    options: StartOptions,
   ): Promise<WorkerSession> {
+    if (this.options.unavailableOnStartSessionIds?.has(session.id)) {
+      this.repo.updateSession(session.id, {
+        status: "failed",
+        process_pid: null,
+        failure_reason:
+          "session does not have a live Codex app-server process in this server process; start a follow-up session",
+        ended_at: new Date().toISOString(),
+      });
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    this.repo.markMessageSent(options.initialMessage.id, "registry-start");
     return session;
   }
 
@@ -2464,6 +2936,21 @@ class RegistryRuntime implements CodexRuntimeController {
     }
     this.repo.markMessageSent(options.message.id, "registry");
     return this.repo.updateSession(session.id, { status: "running" });
+  }
+
+  async resumeSession(
+    session: WorkerSession,
+    _workspace: Workspace,
+  ): Promise<WorkerSession> {
+    if (!session.codex_thread_id) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    this.liveSessionIds.add(session.id);
+    return this.repo.updateSession(session.id, {
+      status: "awaiting_input",
+      process_pid: "registry-resumed",
+      ended_at: null,
+    });
   }
 
   stopSession(sessionId: string): void {

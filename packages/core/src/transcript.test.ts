@@ -88,6 +88,30 @@ describe("transcript projection", () => {
     });
     expect(nextPage.items.map((entry) => entry.kind)).toEqual(["tool"]);
   });
+
+  it("keeps failed input messages visible for retry context", () => {
+    const page = projectTranscriptEntries(
+      "sess_1",
+      [
+        message({
+          id: "msg_failed",
+          status: "failed",
+          content: "Try again.",
+          error: "runtime unavailable",
+          sent_at: null,
+        }),
+      ],
+      [],
+    );
+
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({
+      id: "message:msg_failed",
+      kind: "message",
+      message_status: "failed",
+      text: "Try again.",
+    });
+  });
 });
 
 function message(input: Partial<Message> = {}): Message {

@@ -6,6 +6,7 @@ import {
   CodexRuntime,
   SessionProcessUnavailableError,
   type CodexRuntimeController,
+  type ResumeOptions,
   type SendOptions,
   type StartOptions,
 } from "./runtime.js";
@@ -168,6 +169,18 @@ export class SupervisorRuntimeClient implements CodexRuntimeController {
     }
   }
 
+  async resumeSession(
+    session: WorkerSession,
+    workspace: Workspace,
+    options: ResumeOptions = {},
+  ): Promise<WorkerSession> {
+    const response = await this.postJson<{ session?: unknown }>(
+      `runtime/sessions/${encodeURIComponent(session.id)}/resume`,
+      { session, workspace, options },
+    );
+    return responseWorkerSession(response);
+  }
+
   async stopSession(sessionId: string): Promise<void> {
     await this.postJson<{ ok?: unknown }>(
       `runtime/sessions/${encodeURIComponent(sessionId)}/stop`,
@@ -275,6 +288,21 @@ function registerRuntimeSupervisorRoutes(
     ) as unknown as SendOptions["message"];
     return {
       session: await state.runtime.sendMessage(session, workspace, { message }),
+    };
+  });
+
+  app.post(path("/runtime/sessions/:id/resume"), async (request) => {
+    const body = asRecord(request.body);
+    const session = requiredRecord(body, "session") as unknown as WorkerSession;
+    const workspace = requiredRecord(body, "workspace") as unknown as Workspace;
+    const rawOptions = asRecord(body.options);
+    const options: ResumeOptions = {
+      ...("codexOptions" in rawOptions
+        ? { codexOptions: rawOptions.codexOptions }
+        : {}),
+    };
+    return {
+      session: await state.runtime.resumeSession(session, workspace, options),
     };
   });
 

@@ -1,0 +1,951 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codexhub Thread Interaction Prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101214;
+        --panel: #171a1f;
+        --panel-2: #1f242b;
+        --panel-3: #282f38;
+        --line: #343c46;
+        --line-strong: #4d5a68;
+        --text: #f3f6fa;
+        --soft: #d6dde6;
+        --muted: #9da7b3;
+        --blue: #70a9ff;
+        --blue-strong: #2c75bb;
+        --cyan: #59d1e5;
+        --green: #62d98b;
+        --yellow: #f0c96b;
+        --red: #ff6d7d;
+        --shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      button,
+      textarea,
+      input {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 324px minmax(0, 1fr);
+        min-height: 100vh;
+        background:
+          linear-gradient(90deg, rgba(255, 255, 255, 0.02), transparent 32%),
+          var(--bg);
+      }
+
+      .sidebar {
+        min-width: 0;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .brand {
+        height: 62px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mark {
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        border: 1px solid #526170;
+        background: #20262e;
+        color: var(--cyan);
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+      }
+
+      .brand-copy {
+        min-width: 0;
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 15px;
+        line-height: 1.2;
+      }
+
+      .brand p {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .search-shell {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .search {
+        height: 38px;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: #111418;
+        color: var(--text);
+        padding: 0 12px;
+        outline: none;
+      }
+
+      .search:focus {
+        border-color: var(--blue);
+      }
+
+      .project-list {
+        overflow: auto;
+        padding: 12px;
+      }
+
+      .project {
+        border: 1px solid var(--line);
+        background: #15191e;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        overflow: hidden;
+      }
+
+      .project-header {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 34px;
+        align-items: center;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .project-toggle,
+      .icon-button {
+        width: 32px;
+        height: 32px;
+        border: 1px solid transparent;
+        background: transparent;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+      }
+
+      .project-toggle:hover,
+      .icon-button:hover {
+        background: var(--panel-2);
+        border-color: var(--line-strong);
+      }
+
+      .project-toggle {
+        width: 24px;
+        height: 24px;
+        color: var(--muted);
+      }
+
+      .project-name {
+        min-width: 0;
+      }
+
+      .project-name strong,
+      .thread-title strong {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .project-name span,
+      .thread-title span {
+        display: block;
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .thread-list {
+        padding: 0 8px 10px;
+      }
+
+      .thread {
+        width: 100%;
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--soft);
+        border-radius: 7px;
+        padding: 10px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        text-align: left;
+        cursor: pointer;
+      }
+
+      .thread:hover {
+        background: #1c2128;
+      }
+
+      .thread.active {
+        background: #223141;
+        border-color: #3a6288;
+      }
+
+      .thread-meta {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+
+      .dot.running {
+        background: var(--blue);
+        box-shadow: 0 0 0 4px rgba(112, 169, 255, 0.13);
+      }
+
+      .dot.waiting {
+        background: var(--green);
+      }
+
+      .dot.detached,
+      .dot.empty {
+        background: var(--yellow);
+      }
+
+      .dot.failed {
+        background: var(--red);
+      }
+
+      .main {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        background: #0f1114;
+      }
+
+      .topbar {
+        min-height: 64px;
+        border-bottom: 1px solid var(--line);
+        background: rgba(18, 21, 25, 0.96);
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: center;
+        padding: 10px 18px;
+      }
+
+      .thread-heading {
+        min-width: 0;
+      }
+
+      .thread-heading h2 {
+        margin: 0;
+        font-size: 17px;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .thread-heading p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .transcript-shell {
+        min-height: 0;
+        display: flex;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .transcript {
+        width: min(920px, 100%);
+        min-height: 0;
+        overflow: auto;
+        padding: 22px 24px 28px;
+        scroll-behavior: smooth;
+      }
+
+      .window-note {
+        border: 1px solid var(--line);
+        background: #15191e;
+        color: var(--muted);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 12px;
+        margin-bottom: 18px;
+      }
+
+      .empty {
+        min-height: 44vh;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        color: var(--muted);
+      }
+
+      .empty-card {
+        width: min(520px, 100%);
+        border: 1px solid var(--line);
+        background: #15191e;
+        border-radius: 8px;
+        padding: 28px;
+        box-shadow: var(--shadow);
+      }
+
+      .empty-card h3 {
+        margin: 0;
+        color: var(--text);
+        font-size: 20px;
+      }
+
+      .empty-card p {
+        margin: 8px 0 0;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 12px;
+        margin: 0 0 18px;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 8px;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        display: grid;
+        place-items: center;
+        color: var(--soft);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .message.user .avatar {
+        background: #223141;
+        border-color: #3c6c9a;
+      }
+
+      .message.assistant .avatar {
+        background: #1d2b23;
+        border-color: #3e7654;
+      }
+
+      .message.system .avatar {
+        background: #2a2518;
+        border-color: #716336;
+      }
+
+      .bubble {
+        min-width: 0;
+      }
+
+      .bubble-head {
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .bubble-body {
+        color: var(--soft);
+        font-size: 15px;
+        line-height: 1.6;
+      }
+
+      .bubble-body p {
+        margin: 0 0 10px;
+      }
+
+      .bubble-body p:last-child {
+        margin-bottom: 0;
+      }
+
+      .composer-shell {
+        border-top: 1px solid var(--line);
+        background: rgba(18, 21, 25, 0.97);
+        padding: 14px 18px 18px;
+      }
+
+      .composer {
+        width: min(920px, 100%);
+        margin: 0 auto;
+        border: 1px solid var(--line-strong);
+        background: #20242a;
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .composer textarea {
+        width: 100%;
+        min-height: 92px;
+        max-height: 220px;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        padding: 14px 15px;
+        line-height: 1.5;
+      }
+
+      .composer textarea::placeholder {
+        color: #7f8995;
+      }
+
+      .composer-footer {
+        min-height: 44px;
+        border-top: 1px solid var(--line);
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 10px;
+      }
+
+      .send-hint {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .send {
+        height: 32px;
+        min-width: 76px;
+        border: 1px solid #3e83bf;
+        background: #1f5f99;
+        color: #f7fbff;
+        border-radius: 7px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        cursor: pointer;
+      }
+
+      .send:hover {
+        background: #2470b4;
+      }
+
+      .send:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+
+      @media (max-width: 860px) {
+        .app {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          min-height: 320px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .main {
+          min-height: 680px;
+        }
+
+        .topbar {
+          grid-template-columns: 1fr;
+          align-items: start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar" aria-label="Projects and threads">
+        <header class="brand">
+          <div class="mark" aria-hidden="true">CH</div>
+          <div class="brand-copy">
+            <h1>Codexhub</h1>
+            <p>Projects own threads. Threads continue Codex work.</p>
+          </div>
+        </header>
+        <div class="search-shell">
+          <input
+            class="search"
+            type="search"
+            placeholder="Search projects or threads"
+          />
+        </div>
+        <section class="project-list" id="projectList"></section>
+      </aside>
+
+      <section class="main" aria-label="Thread chat">
+        <header class="topbar">
+          <div class="thread-heading">
+            <h2 id="threadTitle"></h2>
+            <p id="threadSubtitle"></p>
+          </div>
+        </header>
+
+        <div class="transcript-shell">
+          <div class="transcript" id="transcript"></div>
+        </div>
+
+        <footer class="composer-shell">
+          <form class="composer" id="composer">
+            <textarea
+              id="prompt"
+              placeholder="Send a message to this thread"
+              autocomplete="off"
+            ></textarea>
+            <div class="composer-footer">
+              <div class="send-hint" id="sendHint"></div>
+              <button class="send" id="send" type="submit">
+                Send <span aria-hidden="true">-></span>
+              </button>
+            </div>
+          </form>
+        </footer>
+      </section>
+    </main>
+
+    <script>
+      const projects = [
+        {
+          id: "codexhub",
+          name: "codex-hub",
+          cwd: "D:/desktop/codex-hub",
+          expanded: true,
+          threads: [
+            {
+              id: "t-refactor",
+              title: "Architecture refactor",
+              threadState: "active",
+              conversationState: "ready",
+              runtime: "attached",
+              visibleCount: 18,
+              totalCount: 348,
+              messages: [
+                {
+                  role: "user",
+                  text: "Pull the latest code and continue the architecture refactor.",
+                  time: "09:18",
+                },
+                {
+                  role: "assistant",
+                  text: "I pulled the branch, reviewed the canvas, and split the refactor into bounded state, CLI, server, and web slices.",
+                  time: "09:21",
+                },
+                {
+                  role: "assistant",
+                  text: "The important state correction is that a readable thread should stay readable and continue from the composer.",
+                  time: "09:37",
+                },
+              ],
+            },
+            {
+              id: "t-status",
+              title: "Session state investigation",
+              threadState: "active",
+              conversationState: "ready",
+              runtime: "detached",
+              visibleCount: 10,
+              totalCount: 121,
+              messages: [
+                {
+                  role: "assistant",
+                  text: "Runtime ownership is currently mixed into thread outcome language, which is why recovery and failure feel overloaded.",
+                  time: "11:05",
+                },
+                {
+                  role: "user",
+                  text: "Why is reconnecting a separate action? It should happen when I send the next message.",
+                  time: "11:08",
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: "agentkit",
+          name: "AgentKit",
+          cwd: "D:/desktop/AgentKit",
+          expanded: true,
+          threads: [
+            {
+              id: "t-agentkit-empty",
+              title: "Untitled thread",
+              threadState: "empty",
+              conversationState: "ready",
+              runtime: "not_started",
+              visibleCount: 0,
+              totalCount: 0,
+              messages: [],
+            },
+          ],
+        },
+        {
+          id: "playground",
+          name: "Playground",
+          cwd: "D:/desktop/Playground",
+          expanded: false,
+          threads: [],
+        },
+      ];
+
+      let activeThreadId = "t-refactor";
+      let activeProjectId = "codexhub";
+
+      const projectList = document.querySelector("#projectList");
+      const threadTitle = document.querySelector("#threadTitle");
+      const threadSubtitle = document.querySelector("#threadSubtitle");
+      const transcript = document.querySelector("#transcript");
+      const composer = document.querySelector("#composer");
+      const promptInput = document.querySelector("#prompt");
+      const sendHint = document.querySelector("#sendHint");
+
+      function findProject(projectId) {
+        return projects.find((project) => project.id === projectId);
+      }
+
+      function findThread(threadId) {
+        for (const project of projects) {
+          const thread = project.threads.find((item) => item.id === threadId);
+          if (thread) {
+            return { project, thread };
+          }
+        }
+        return { project: projects[0], thread: projects[0].threads[0] };
+      }
+
+      function threadListSubtitle(thread) {
+        if (thread.threadState === "empty") return "Empty thread";
+        if (thread.conversationState === "streaming") return "Responding";
+        if (thread.conversationState === "failedToSend")
+          return "Needs attention";
+        return `${thread.totalCount} messages`;
+      }
+
+      function renderProjects() {
+        projectList.innerHTML = "";
+
+        projects.forEach((project) => {
+          const shell = document.createElement("article");
+          shell.className = "project";
+
+          const header = document.createElement("div");
+          header.className = "project-header";
+
+          const toggle = document.createElement("button");
+          toggle.className = "project-toggle";
+          toggle.type = "button";
+          toggle.title = project.expanded
+            ? "Collapse project"
+            : "Expand project";
+          toggle.textContent = project.expanded ? "v" : ">";
+          toggle.addEventListener("click", () => {
+            project.expanded = !project.expanded;
+            render();
+          });
+
+          const name = document.createElement("div");
+          name.className = "project-name";
+          name.innerHTML = `<strong>${project.name}</strong><span>${project.cwd}</span>`;
+
+          const add = document.createElement("button");
+          add.className = "icon-button";
+          add.type = "button";
+          add.title = `New thread in ${project.name}`;
+          add.textContent = "+";
+          add.addEventListener("click", () => createThread(project.id));
+
+          header.append(toggle, name, add);
+          shell.append(header);
+
+          if (project.expanded) {
+            const list = document.createElement("div");
+            list.className = "thread-list";
+
+            if (project.threads.length === 0) {
+              const empty = document.createElement("button");
+              empty.className = "thread";
+              empty.type = "button";
+              empty.addEventListener("click", () => createThread(project.id));
+              empty.innerHTML =
+                '<span class="thread-title"><strong>No threads yet</strong><span>Create one in this project</span></span><span class="thread-meta"><span class="dot empty"></span>new</span>';
+              list.append(empty);
+            }
+
+            project.threads.forEach((thread) => {
+              const row = document.createElement("button");
+              row.className = `thread ${thread.id === activeThreadId ? "active" : ""}`;
+              row.type = "button";
+              row.addEventListener("click", () => {
+                activeProjectId = project.id;
+                activeThreadId = thread.id;
+                render();
+                focusComposer();
+              });
+
+              const runtimeClass =
+                thread.threadState === "empty"
+                  ? "empty"
+                  : thread.conversationState === "streaming"
+                    ? "running"
+                    : "waiting";
+
+              row.innerHTML = `
+                <span class="thread-title">
+                  <strong>${thread.title}</strong>
+                  <span>${threadListSubtitle(thread)}</span>
+                </span>
+                <span class="thread-meta">
+                  <span class="dot ${runtimeClass}"></span>
+                  ${thread.totalCount}
+                </span>
+              `;
+              list.append(row);
+            });
+
+            shell.append(list);
+          }
+
+          projectList.append(shell);
+        });
+      }
+
+      function renderHeader(project, thread) {
+        threadTitle.textContent = thread.title;
+        threadSubtitle.textContent = `${project.name} - ${project.cwd}`;
+      }
+
+      function renderTranscript(thread) {
+        transcript.innerHTML = "";
+
+        if (thread.totalCount > thread.visibleCount) {
+          const note = document.createElement("div");
+          note.className = "window-note";
+          note.textContent = `${thread.visibleCount} recent messages mounted from ${thread.totalCount}; older transcript pages stay fetchable and virtualized.`;
+          transcript.append(note);
+        }
+
+        if (thread.messages.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty";
+          empty.innerHTML = `
+            <div class="empty-card">
+              <h3>New thread in ${findProject(activeProjectId).name}</h3>
+              <p>The thread exists in this project. Type the first message below to start Codex work.</p>
+            </div>
+          `;
+          transcript.append(empty);
+          return;
+        }
+
+        thread.messages.forEach((message) => {
+          const row = document.createElement("article");
+          row.className = `message ${message.role}`;
+          const initials =
+            message.role === "assistant"
+              ? "AI"
+              : message.role === "system"
+                ? "SYS"
+                : "YOU";
+          const name =
+            message.role === "assistant"
+              ? "Codex"
+              : message.role === "system"
+                ? "Codexhub"
+                : "You";
+          row.innerHTML = `
+            <div class="avatar">${initials}</div>
+            <div class="bubble">
+              <div class="bubble-head"><strong>${name}</strong><span>${message.time}</span></div>
+              <div class="bubble-body">${paragraphs(message.text)}</div>
+            </div>
+          `;
+          transcript.append(row);
+        });
+
+        requestAnimationFrame(() => {
+          transcript.scrollTop = transcript.scrollHeight;
+        });
+      }
+
+      function paragraphs(text) {
+        return text
+          .split("\n")
+          .map((line) => `<p>${escapeHtml(line)}</p>`)
+          .join("");
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function renderComposer(project, thread) {
+        promptInput.placeholder =
+          thread.threadState === "empty"
+            ? `Start a new Codex thread in ${project.name}`
+            : `Send a message to ${thread.title}`;
+        sendHint.textContent =
+          thread.threadState === "empty"
+            ? "First message starts this thread."
+            : "Ctrl+Enter sends. Enter adds a new line.";
+      }
+
+      function createThread(projectId) {
+        const project = findProject(projectId);
+        project.expanded = true;
+        const thread = {
+          id: `t-${project.id}-${Date.now()}`,
+          title: "Untitled thread",
+          threadState: "empty",
+          conversationState: "ready",
+          runtime: "not_started",
+          visibleCount: 0,
+          totalCount: 0,
+          messages: [],
+        };
+        project.threads.unshift(thread);
+        activeProjectId = project.id;
+        activeThreadId = thread.id;
+        render();
+        focusComposer();
+      }
+
+      function nowTime() {
+        return new Intl.DateTimeFormat("en", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(new Date());
+      }
+
+      function sendMessage(text) {
+        const { project, thread } = findThread(activeThreadId);
+        const wasCold = thread.runtime !== "attached";
+
+        if (thread.threadState === "empty") {
+          thread.title = text.slice(0, 48) || "Untitled thread";
+        }
+
+        if (wasCold) {
+          thread.runtime = "attached";
+        }
+
+        thread.threadState = "active";
+        thread.conversationState = "streaming";
+        thread.messages.push({ role: "user", text, time: nowTime() });
+        thread.totalCount += 1;
+        thread.visibleCount = Math.min(
+          thread.totalCount,
+          Math.max(thread.visibleCount + 1, 1),
+        );
+        render();
+
+        window.setTimeout(() => {
+          thread.messages.push({
+            role: "assistant",
+            text: "Received. I am continuing inside the same project-bound thread. You can keep typing here without managing any separate connection step.",
+            time: nowTime(),
+          });
+          thread.conversationState = "ready";
+          thread.totalCount += 1;
+          thread.visibleCount = Math.min(
+            thread.totalCount,
+            Math.max(thread.visibleCount + 1, 1),
+          );
+          render();
+        }, 650);
+      }
+
+      function focusComposer() {
+        window.setTimeout(() => promptInput.focus(), 0);
+      }
+
+      function render() {
+        const { project, thread } = findThread(activeThreadId);
+        activeProjectId = project.id;
+        renderProjects();
+        renderHeader(project, thread);
+        renderTranscript(thread);
+        renderComposer(project, thread);
+      }
+
+      composer.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = promptInput.value.trim();
+        if (!text) return;
+        promptInput.value = "";
+        sendMessage(text);
+      });
+
+      promptInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+          composer.requestSubmit();
+        }
+      });
+
+      render();
+      focusComposer();
+    </script>
+  </body>
+</html>

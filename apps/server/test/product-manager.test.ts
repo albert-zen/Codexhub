@@ -155,6 +155,94 @@ describe("ProductManager", () => {
     });
   });
 
+  it("reuses an existing message for duplicate idempotent sends", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, { status: "awaiting_input" });
+
+    const first = await manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Please continue.",
+      senderType: "human",
+      idempotencyKey: "retry-key",
+    });
+    const second = await manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Please continue.",
+      senderType: "human",
+      idempotencyKey: "retry-key",
+    });
+
+    expect(first.message.id).toBe(second.message.id);
+    expect(repo.listMessages(session.id)).toHaveLength(1);
+    expect(runtime.sends).toHaveLength(1);
+  });
+
+  it("rejects overlapping non-idempotent sends with a machine-readable error", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, { status: "awaiting_input" });
+    runtime.blockSendSessionIds.add(session.id);
+
+    const firstSend = manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Please continue.",
+      senderType: "human",
+    });
+
+    await expect(
+      manager.sendWorkerMessage({
+        sessionReference: session.id,
+        mode: "continue",
+        content: "Overlapping send.",
+        senderType: "human",
+      }),
+    ).rejects.toMatchObject({
+      code: "thread_turn_in_progress",
+      details: { session_id: session.id },
+    });
+
+    runtime.unblockSend(session.id);
+    await firstSend;
+    expect(runtime.sends).toHaveLength(1);
+  });
+
+  it("rejects empty thread messages before creating a persisted message", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+
+    await expect(
+      manager.sendWorkerMessage({
+        sessionReference: session.id,
+        mode: "initial",
+        content: "   ",
+        senderType: "human",
+        ensureRuntimeReady: true,
+        keepThreadReadableOnRuntimeUnavailable: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "message_required",
+    });
+
+    expect(runtime.starts).toHaveLength(0);
+    expect(repo.listMessages(session.id)).toHaveLength(0);
+  });
+
   it("stops and completes workers by resolved session reference", async () => {
     const { manager, repo, runtime } = setup();
     const { project, workspace } = seedProjectWorkspace(repo);
@@ -215,6 +303,208 @@ describe("ProductManager", () => {
       error: expect.stringContaining("live Codex app-server process"),
     });
   });
+
+  it("resumes a detached runtime before sending", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-detached",
+      process_pid: "stale",
+    });
+    runtime.detachedSessionIds.add(session.id);
+
+    const result = await manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Continue after detach.",
+      senderType: "manager_agent",
+      ensureRuntimeReady: true,
+    });
+
+    expect(runtime.resumes).toEqual([
+      { sessionId: session.id, workspaceId: workspace.id },
+    ]);
+    expect(runtime.sends).toHaveLength(1);
+    expect(result.message.status).toBe("sent");
+  });
+
+  it("resumes an exited thread before sending without requiring follow-up", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "completed",
+      codex_thread_id: "thread-completed",
+      process_pid: null,
+      ended_at: new Date().toISOString(),
+    });
+    runtime.detachedSessionIds.add(session.id);
+
+    const result = await manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Continue the completed thread.",
+      senderType: "manager_agent",
+      ensureRuntimeReady: true,
+      keepThreadReadableOnRuntimeUnavailable: true,
+    });
+
+    expect(runtime.resumes).toEqual([
+      { sessionId: session.id, workspaceId: workspace.id },
+    ]);
+    expect(runtime.sends).toHaveLength(1);
+    expect(result.message.status).toBe("sent");
+  });
+
+  it("keeps a thread readable when automatic resume fails before send", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "awaiting_input",
+      codex_thread_id: "thread-resume-fails",
+      process_pid: "stale",
+    });
+    runtime.detachedSessionIds.add(session.id);
+    runtime.unavailableOnResumeSessionIds.add(session.id);
+
+    await expect(
+      manager.sendWorkerMessage({
+        sessionReference: session.id,
+        mode: "continue",
+        content: "Continue after detached runtime.",
+        senderType: "manager_agent",
+        ensureRuntimeReady: true,
+        keepThreadReadableOnRuntimeUnavailable: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "session_process_unavailable",
+      details: {
+        session_id: session.id,
+        follow_up_available: false,
+        retryable: true,
+      },
+    });
+
+    expect(runtime.resumes).toEqual([
+      { sessionId: session.id, workspaceId: workspace.id },
+    ]);
+    expect(runtime.sends).toHaveLength(0);
+    expect(repo.getSession(session.id)).toMatchObject({
+      status: "awaiting_input",
+      process_pid: null,
+      failure_reason: null,
+    });
+    expect(repo.listMessages(session.id)[0]).toMatchObject({
+      mode: "continue",
+      status: "failed",
+      error: expect.stringContaining("live Codex app-server process"),
+    });
+  });
+
+  it("keeps an empty thread retryable when first runtime start fails", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    runtime.unavailableOnStartSessionIds.add(session.id);
+
+    await expect(
+      manager.sendWorkerMessage({
+        sessionReference: session.id,
+        mode: "continue",
+        content: "Start this thread.",
+        senderType: "manager_agent",
+        ensureRuntimeReady: true,
+        keepThreadReadableOnRuntimeUnavailable: true,
+        idempotencyKey: "start-retry-key",
+      }),
+    ).rejects.toMatchObject({
+      code: "session_process_unavailable",
+      details: {
+        session_id: session.id,
+        follow_up_available: false,
+        retryable: true,
+      },
+    });
+
+    expect(repo.getSession(session.id)).toMatchObject({
+      status: "starting",
+      codex_thread_id: null,
+      process_pid: null,
+      failure_reason: null,
+      started_at: null,
+      ended_at: null,
+    });
+    expect(repo.listMessages(session.id)[0]).toMatchObject({
+      mode: "initial",
+      status: "failed",
+      content: "Start this thread.",
+      error: expect.stringContaining("live Codex app-server process"),
+    });
+
+    runtime.unavailableOnStartSessionIds.delete(session.id);
+    const retry = await manager.sendWorkerMessage({
+      sessionReference: session.id,
+      mode: "continue",
+      content: "Retry this thread.",
+      senderType: "manager_agent",
+      ensureRuntimeReady: true,
+      keepThreadReadableOnRuntimeUnavailable: true,
+      idempotencyKey: "start-retry-key",
+    });
+
+    expect(retry.message).toMatchObject({
+      mode: "initial",
+      status: "sent",
+      content: "Retry this thread.",
+    });
+    expect(repo.listMessages(session.id)).toHaveLength(2);
+  });
+
+  it("rejects a new continue while a thread turn is already running", async () => {
+    const { manager, repo, runtime } = setup();
+    const { project, workspace } = seedProjectWorkspace(repo);
+    const session = repo.createSession({
+      project_id: project.id,
+      workspace_id: workspace.id,
+    });
+    repo.updateSession(session.id, {
+      status: "running",
+      codex_thread_id: "thread-running",
+      process_pid: "pid-running",
+    });
+
+    await expect(
+      manager.sendWorkerMessage({
+        sessionReference: session.id,
+        mode: "continue",
+        content: "Start another turn.",
+        senderType: "manager_agent",
+        ensureRuntimeReady: true,
+        keepThreadReadableOnRuntimeUnavailable: true,
+      }),
+    ).rejects.toMatchObject({
+      code: "thread_turn_in_progress",
+      details: { session_id: session.id },
+    });
+
+    expect(runtime.sends).toHaveLength(0);
+    expect(repo.listMessages(session.id)).toHaveLength(0);
+  });
 });
 
 function setup(): {
@@ -263,12 +553,18 @@ class FakeRuntime implements CodexRuntimeController {
   }> = [];
   readonly stoppedSessionIds: string[] = [];
   readonly completedSessionIds: string[] = [];
+  readonly detachedSessionIds = new Set<string>();
+  readonly resumes: Array<{ sessionId: string; workspaceId: string }> = [];
+  readonly unavailableOnStartSessionIds = new Set<string>();
   readonly unavailableOnSendSessionIds = new Set<string>();
+  readonly unavailableOnResumeSessionIds = new Set<string>();
+  readonly blockSendSessionIds = new Set<string>();
+  private readonly blockedSends = new Map<string, () => void>();
 
   constructor(private readonly repo: HubRepository) {}
 
-  hasLiveSession(_session: WorkerSession): boolean {
-    return true;
+  hasLiveSession(session: WorkerSession): boolean {
+    return !this.detachedSessionIds.has(session.id);
   }
 
   async startSession(
@@ -276,6 +572,16 @@ class FakeRuntime implements CodexRuntimeController {
     workspace: Workspace,
     options: StartOptions,
   ): Promise<WorkerSession> {
+    if (this.unavailableOnStartSessionIds.has(session.id)) {
+      this.repo.updateSession(session.id, {
+        status: "failed",
+        process_pid: null,
+        failure_reason:
+          "session does not have a live Codex app-server process in this server process; start a follow-up session",
+        ended_at: new Date().toISOString(),
+      });
+      throw new SessionProcessUnavailableError(session.id);
+    }
     this.starts.push({
       sessionId: session.id,
       workspaceId: workspace.id,
@@ -298,14 +604,47 @@ class FakeRuntime implements CodexRuntimeController {
     if (this.unavailableOnSendSessionIds.has(session.id)) {
       throw new SessionProcessUnavailableError(session.id);
     }
+    if (this.detachedSessionIds.has(session.id)) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
     this.sends.push({
       sessionId: session.id,
       workspaceId: workspace.id,
       message: options.message,
     });
+    if (this.blockSendSessionIds.has(session.id)) {
+      await new Promise<void>((resolve) => {
+        this.blockedSends.set(session.id, resolve);
+      });
+    }
     this.repo.markMessageSent(options.message.id, "fake-send");
     return this.repo.updateSession(session.id, {
       status: "running",
+    });
+  }
+
+  unblockSend(sessionId: string): void {
+    this.blockSendSessionIds.delete(sessionId);
+    this.blockedSends.get(sessionId)?.();
+    this.blockedSends.delete(sessionId);
+  }
+
+  async resumeSession(
+    session: WorkerSession,
+    workspace: Workspace,
+  ): Promise<WorkerSession> {
+    this.resumes.push({ sessionId: session.id, workspaceId: workspace.id });
+    if (this.unavailableOnResumeSessionIds.has(session.id)) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    if (!session.codex_thread_id) {
+      throw new SessionProcessUnavailableError(session.id);
+    }
+    this.detachedSessionIds.delete(session.id);
+    return this.repo.updateSession(session.id, {
+      status: "awaiting_input",
+      process_pid: "resumed",
+      ended_at: null,
     });
   }
 

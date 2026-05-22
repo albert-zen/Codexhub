@@ -144,6 +144,43 @@ interface SessionSendOptions extends BaseCommandOptions {
   senderId?: string;
 }
 
+interface ThreadCreateOptions extends BaseCommandOptions {
+  project: string;
+  workspace: string;
+  idempotencyKey?: string;
+}
+
+interface ThreadSendOptions extends BaseCommandOptions {
+  message?: string;
+  file?: string;
+  sender: string;
+  senderId?: string;
+  wait?: string;
+  timeout?: string;
+  idempotencyKey?: string;
+}
+
+interface ThreadContextOptions extends BaseCommandOptions {
+  limit?: number;
+  cursor?: string;
+  afterSequence?: number;
+  beforeSequence?: number;
+  tools?: string;
+  recent?: boolean;
+}
+
+interface ThreadToolCallsOptions extends BaseCommandOptions {
+  limit?: number;
+  tools?: string;
+  recent?: boolean;
+}
+
+interface ThreadListOptions extends BaseCommandOptions {
+  project: string;
+  limit?: number;
+  cursor?: string;
+}
+
 interface ReviewStatusSetOptions extends BaseCommandOptions {
   implementationDone?: boolean;
   selfValidationDone?: boolean;
@@ -349,6 +386,248 @@ export function createProgram(env: CliEnvironment = {}): Command {
       }),
     );
   program.addCommand(workspace);
+
+  const thread = new Command("thread").description(
+    "Manage project-scoped threads for agents",
+  );
+  jsonOption(thread.command("create").description("Create an empty thread"))
+    .requiredOption("--project <id>", "Project ID")
+    .requiredOption("--workspace <id>", "Workspace ID")
+    .option("--idempotency-key <key>", "Idempotency key for safe retries")
+    .action((opts: ThreadCreateOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).post(
+          `/projects/${encodeURIComponent(opts.project)}/threads`,
+          omitUndefined({
+            workspace_id: opts.workspace,
+            idempotency_key: opts.idempotencyKey,
+          }),
+        );
+        printResult(env, opts, result, () =>
+          formatThread(unwrapRecord(result, "thread")),
+        );
+      }),
+    );
+
+  jsonOption(thread.command("context").description("Read agent context window"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .option("--limit <n>", "Maximum transcript entries", parsePositiveInt)
+    .option("--cursor <cursor>", "Page cursor")
+    .option(
+      "--after-sequence <n>",
+      "Read entries after sequence",
+      parsePositiveInt,
+    )
+    .option(
+      "--before-sequence <n>",
+      "Read entries before sequence",
+      parsePositiveInt,
+    )
+    .option(
+      "--tools <hidden|collapsed|expanded>",
+      "Tool call detail",
+      "collapsed",
+    )
+    .option("--recent", "Read latest context window")
+    .option("--no-recent", "Read context using cursor or sequence filters")
+    .action((threadId: string, opts: ThreadContextOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}/context`,
+          {
+            query: omitQuery({
+              limit: opts.limit,
+              cursor: opts.cursor,
+              after_sequence: opts.afterSequence,
+              before_sequence: opts.beforeSequence,
+              tools: parseContextTools(opts.tools),
+              recent: opts.recent,
+            }),
+          },
+        );
+        printResult(env, opts, result, () => formatThreadContext(result));
+      }),
+    );
+
+  jsonOption(thread.command("list").description("List project threads"))
+    .requiredOption("--project <id>", "Project ID")
+    .option("--limit <n>", "Maximum number of threads", parsePositiveInt)
+    .option("--cursor <cursor>", "Page cursor")
+    .action((opts: ThreadListOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/projects/${encodeURIComponent(opts.project)}/threads`,
+          {
+            query: omitQuery({ limit: opts.limit, cursor: opts.cursor }),
+          },
+        );
+        printResult(env, opts, result, () => formatThreads(result));
+      }),
+    );
+
+  jsonOption(thread.command("inspect").description("Inspect a thread"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .action((threadId: string, opts: BaseCommandOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}`,
+        );
+        printResult(env, opts, result, () =>
+          formatThread(unwrapRecord(result, "thread")),
+        );
+      }),
+    );
+
+  jsonOption(thread.command("trace").description("Read thread transcript"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .option("--limit <n>", "Maximum transcript entries", parsePositiveInt)
+    .option("--cursor <cursor>", "Page cursor")
+    .option(
+      "--after-sequence <n>",
+      "Read entries after sequence",
+      parsePositiveInt,
+    )
+    .option(
+      "--before-sequence <n>",
+      "Read entries before sequence",
+      parsePositiveInt,
+    )
+    .option("--recent", "Read latest transcript window")
+    .option("--no-recent", "Read transcript using cursor or sequence filters")
+    .action((threadId: string, opts: SessionTraceOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}/transcript`,
+          {
+            query: omitQuery<TranscriptListQuery>({
+              limit: opts.limit,
+              cursor: opts.cursor,
+              after_sequence: opts.afterSequence,
+              before_sequence: opts.beforeSequence,
+              recent: traceRecentQuery(opts),
+            }),
+          },
+        );
+        const traceResult = transcriptResult(threadId, result);
+        printResult(env, opts, traceResult, () =>
+          formatTranscript(traceResult),
+        );
+      }),
+    );
+
+  jsonOption(thread.command("latest").description("Print latest agent message"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .option("--type <type>", "Item type", "agentmessage")
+    .action((threadId: string, opts: SessionLatestOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}/latest`,
+          {
+            query: omitQuery({ type: parseOptionalItemType(opts.type) }),
+          },
+        );
+        printResult(env, opts, result, () => formatLatest(result));
+      }),
+    );
+
+  jsonOption(thread.command("items").description("List thread items"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .option("--type <type>", "Item type", "all")
+    .option("--limit <n>", "Maximum number of items", parsePositiveInt)
+    .option("--cursor <cursor>", "Page cursor")
+    .option(
+      "--after-sequence <n>",
+      "Read items after sequence",
+      parsePositiveInt,
+    )
+    .option(
+      "--before-sequence <n>",
+      "Read items before sequence",
+      parsePositiveInt,
+    )
+    .option("--recent", "Read latest matching items")
+    .action((threadId: string, opts: SessionItemsOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}/items`,
+          {
+            query: omitQuery<ItemListQuery>({
+              type: parseOptionalItemType(opts.type),
+              limit: opts.limit,
+              cursor: opts.cursor,
+              after_sequence: opts.afterSequence,
+              before_sequence: opts.beforeSequence,
+              recent: opts.recent,
+            }),
+          },
+        );
+        printResult(env, opts, result, () => formatItems(result));
+      }),
+    );
+
+  jsonOption(thread.command("tool-calls").description("List thread tool calls"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .option("--limit <n>", "Maximum number of tool calls", parsePositiveInt)
+    .option(
+      "--tools <hidden|collapsed|expanded>",
+      "Tool call detail",
+      "collapsed",
+    )
+    .option("--recent", "Read latest tool calls")
+    .action((threadId: string, opts: ThreadToolCallsOptions) =>
+      runAction(env, opts, async () => {
+        const result = await client(program, env).get(
+          `/threads/${encodeURIComponent(threadId)}/tool-calls`,
+          {
+            query: omitQuery({
+              limit: opts.limit,
+              tools: parseContextTools(opts.tools),
+              recent: opts.recent,
+            }),
+          },
+        );
+        printResult(env, opts, result, () => formatToolCalls(result));
+      }),
+    );
+
+  jsonOption(thread.command("send").description("Send a message to a thread"))
+    .argument("<thread-id>", SESSION_REF_DESCRIPTION)
+    .argument("[message...]", "Message content")
+    .option("-m, --message <text>", "Message content")
+    .option("--file <path>", "Read message content from a file")
+    .option("--sender <manager_agent|human|system>", "Sender type", "human")
+    .option("--sender-id <id>", "Sender ID")
+    .option("--wait <accepted|first-event|turn-complete>", "Wait milestone")
+    .option("--timeout <duration>", "Wait timeout")
+    .option("--idempotency-key <key>", "Idempotency key for safe retries")
+    .action(
+      (threadId: string, messageParts: string[], opts: ThreadSendOptions) =>
+        runAction(env, opts, async () => {
+          const content = await readContent(
+            env,
+            [opts.message],
+            opts.file,
+            messageParts,
+          );
+          if (!content || content.trim() === "")
+            throw new Error("message content is required");
+          const result = await client(program, env).post(
+            `/threads/${encodeURIComponent(threadId)}/messages`,
+            omitUndefined({
+              content,
+              sender_type: parseSenderType(opts.sender),
+              sender_id: opts.senderId,
+              wait: parseWaitMode(opts.wait),
+              timeout: opts.timeout,
+              idempotency_key: opts.idempotencyKey,
+            }),
+          );
+          printResult(env, opts, result, () =>
+            formatMessageQueued(unwrapRecord(result, "message")),
+          );
+        }),
+    );
+  program.addCommand(thread);
 
   const session = new Command("session").description("Manage a worker session");
   jsonOption(session.command("start").description("Start a session"))
@@ -1128,6 +1407,30 @@ function parseSenderType(value: string): SenderType {
   throw new Error("--sender must be manager_agent, human, or system");
 }
 
+function parseWaitMode(
+  value: string | undefined,
+): "accepted" | "first-event" | "turn-complete" | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "accepted" ||
+    value === "first-event" ||
+    value === "turn-complete"
+  ) {
+    return value;
+  }
+  throw new Error("--wait must be accepted, first-event, or turn-complete");
+}
+
+function parseContextTools(
+  value: string | undefined,
+): "hidden" | "collapsed" | "expanded" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "hidden" || value === "collapsed" || value === "expanded") {
+    return value;
+  }
+  throw new Error("--tools must be hidden, collapsed, or expanded");
+}
+
 function parseOptionalItemType(
   value: string | undefined,
 ): ItemType | "all" | undefined {
@@ -1288,6 +1591,48 @@ function formatMessageQueued(record: Record<string, unknown> | null): string {
   const id = stringField(record, "id") ?? "(unknown id)";
   const status = stringField(record, "status");
   return status ? `Message ${id} ${status}` : `Message ${id} queued`;
+}
+
+function formatThread(record: Record<string, unknown> | null): string {
+  if (!record) return "Thread not found.";
+  const id = stringField(record, "id") ?? "(unknown id)";
+  const threadState = stringField(record, "thread_state") ?? "unknown";
+  const conversationState =
+    stringField(record, "conversation_state") ?? "unknown";
+  const workspace = stringField(record, "workspace_id");
+  return workspace
+    ? `${id} ${threadState}/${conversationState} workspace=${workspace}`
+    : `${id} ${threadState}/${conversationState}`;
+}
+
+function formatThreadContext(value: unknown): string {
+  const thread = unwrapRecord(value, "thread");
+  const latest = stringField(asRecord(value), "latest_agent_message");
+  const header = formatThread(thread);
+  return latest ? `${header}\nlatest="${oneLine(latest, 180)}"` : header;
+}
+
+function formatThreads(value: unknown): string {
+  const threads = extractItems(value, "threads");
+  if (threads.length === 0) return "No threads.";
+  return threads.map(formatThread).join("\n");
+}
+
+function formatToolCalls(value: unknown): string {
+  const toolCalls = extractItems(value, "tool_calls");
+  if (toolCalls.length === 0) return "No tool calls.";
+  return toolCalls
+    .map((toolCall) => {
+      const id = stringField(toolCall, "id") ?? "(unknown id)";
+      const status = stringField(toolCall, "status") ?? "unknown";
+      const text = stringField(toolCall, "text");
+      const result = stringField(toolCall, "result_text");
+      const suffix = result ?? text;
+      return suffix
+        ? `${id} ${status}: ${oneLine(suffix, 140)}`
+        : `${id} ${status}`;
+    })
+    .join("\n");
 }
 
 function formatReviewStatus(value: unknown): string {

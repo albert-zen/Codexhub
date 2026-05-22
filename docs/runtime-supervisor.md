@@ -19,9 +19,17 @@ prove they still have a live Codex process. The failure reason says the server
 restarted without a live Codex process, `process_pid` is cleared, and `ended_at`
 is set.
 
-This is deliberate. A persisted `codex_thread_id`, `codex_turn_id`, or OS pid is
-not enough to safely continue a session after the HTTP server has lost stdio
-ownership. Codexhub does not claim those sessions are live or continuable.
+This is deliberate for the lower-level session lifecycle. A persisted
+`codex_thread_id`, `codex_turn_id`, or OS pid is not enough to claim a session is
+still live after the HTTP server has lost stdio ownership. Codexhub does not
+report those sessions as live.
+
+The project-scoped Thread API has a different user-facing send contract. When a
+Thread send targets a backing session with a persisted `codex_thread_id`,
+Codexhub may ask the configured runtime to resume that Codex thread before
+sending the message. Resume is treated as part of `thread send`, not as a
+separate user operation. If no Codex thread cursor exists, the send remains a
+retryable message failure rather than proof that the Thread itself is dead.
 
 The default in-process `CodexRuntime` has no durable registry across HTTP server
 restarts, so the default behavior remains fail-closed. `createServer` accepts a
@@ -32,9 +40,9 @@ reconciliation skips only sessions that the configured runtime explicitly marks
 available; every other transient session still uses the failed-session
 follow-up path.
 
-If a message send reaches a non-terminal session record but the runtime has no
-managed process for it, the API returns `409 session_process_unavailable`. The
-error includes:
+If a lower-level session message send reaches a non-terminal session record but
+the runtime has no managed process for it, the API returns
+`409 session_process_unavailable`. The error includes:
 
 - `session_id`
 - `follow_up_available: true`
@@ -43,6 +51,13 @@ error includes:
 The failed send is recorded on the source session, the source session is marked
 `failed`, and operators can start a fresh related worker through
 `POST /api/v1/sessions/:id/follow-up`.
+
+If the same missing-runtime condition occurs through `POST
+/api/v1/threads/:id/messages`, Codexhub first attempts implicit resume when the
+backing session has `codex_thread_id`. If resume is unavailable or send still
+cannot reach a runtime, the attempted message is recorded as `failed`, the
+Thread remains readable/retryable, and the error reports
+`retryable: true` with `follow_up_available: false`.
 
 ## External Supervisor Mode
 
@@ -82,11 +97,14 @@ reconnect to the same supervisor URL, ask whether persisted transient sessions
 are live, and continue only those sessions the supervisor proves are still
 managed.
 
-If the supervisor is missing or unreachable during a message send, the API uses
-the existing structured `409 session_process_unavailable` fallback with a
-follow-up endpoint. If a new session start cannot reach the supervisor, the API
-returns a structured `503 runtime_supervisor_unavailable` error and records the
-created session as failed.
+If the supervisor is missing or unreachable during a lower-level session message
+send, the API uses the existing structured
+`409 session_process_unavailable` fallback with a follow-up endpoint. Thread
+sends use the Thread retry contract described above. If a new lower-level
+session start cannot reach the supervisor, the API returns a structured
+`503 runtime_supervisor_unavailable` error and records the created session as
+failed; first send to an empty Thread records a failed initial message and keeps
+the Thread available for retry.
 
 ## Guarantees And Limits
 
@@ -104,4 +122,7 @@ management.
 
 Codexhub still does not implement a durable, multi-process reattach protocol for
 supervisor restarts. Restart recovery remains a clear failure plus follow-up
-path for any session the configured runtime cannot prove live.
+path for lower-level session commands when the configured runtime cannot prove a
+session live. The Thread API can attempt Codex thread resume only when the
+runtime adapter supports resuming by `codex_thread_id`; otherwise sends fail as
+retryable Thread message failures.

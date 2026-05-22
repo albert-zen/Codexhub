@@ -74,6 +74,7 @@ export interface CreateSessionInput {
   project_id: string;
   workspace_id: string;
   previous_session_id?: string | null;
+  idempotency_key?: string | null;
 }
 
 export interface CreateTaskSpecInput {
@@ -92,6 +93,7 @@ export interface CreateMessageInput {
   content: string;
   sender_type: SenderType;
   sender_id?: string | null;
+  idempotency_key?: string | null;
 }
 
 export interface UpdateReviewGateStatusInput {
@@ -154,6 +156,14 @@ export type SessionResolution =
 const SESSION_ID_PREFIX = "sess_";
 const SESSION_RESOLUTION_MATCH_LIMIT = 20;
 const TRANSIENT_SESSION_STATUS_SQL = "'starting', 'running', 'awaiting_input'";
+const NOT_EMPTY_THREAD_SESSION_SQL = `NOT (
+  status = 'starting'
+  AND started_at IS NULL
+  AND process_pid IS NULL
+  AND codex_thread_id IS NULL
+  AND last_item_sequence = 0
+  AND last_agent_message IS NULL
+)`;
 const UNAVAILABLE_TRANSIENT_FAILURE_REASON =
   "Server restarted without a live Codex app-server process; session cannot be continued in this server process. Start a follow-up session.";
 
@@ -440,6 +450,14 @@ export class HubRepository {
   }
 
   createSession(input: CreateSessionInput): WorkerSession {
+    if (input.idempotency_key) {
+      const existing = this.getSessionByIdempotencyKey(
+        input.project_id,
+        input.idempotency_key,
+      );
+      if (existing) return existing;
+    }
+
     const now = isoNow();
     const session: WorkerSession = {
       id: id("sess"),
@@ -462,38 +480,84 @@ export class HubRepository {
       updated_at: now,
     };
 
-    this.db
-      .prepare(
-        `INSERT INTO worker_sessions (
-          id, project_id, workspace_id, previous_session_id, status,
-          codex_thread_id, codex_turn_id, codex_session_key, process_pid,
-          last_agent_message_item_id, last_agent_message,
-          last_agent_message_at, last_item_sequence, failure_reason,
-          started_at, ended_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        session.id,
-        session.project_id,
-        session.workspace_id,
-        session.previous_session_id,
-        session.status,
-        session.codex_thread_id,
-        session.codex_turn_id,
-        session.codex_session_key,
-        session.process_pid,
-        session.last_agent_message_item_id,
-        session.last_agent_message,
-        session.last_agent_message_at,
-        session.last_item_sequence,
-        session.failure_reason,
-        session.started_at,
-        session.ended_at,
-        session.created_at,
-        session.updated_at,
-      );
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO worker_sessions (
+            id, project_id, workspace_id, previous_session_id, status,
+            codex_thread_id, codex_turn_id, codex_session_key, process_pid,
+            last_agent_message_item_id, last_agent_message,
+            last_agent_message_at, last_item_sequence, failure_reason,
+            started_at, ended_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          session.id,
+          session.project_id,
+          session.workspace_id,
+          session.previous_session_id,
+          session.status,
+          session.codex_thread_id,
+          session.codex_turn_id,
+          session.codex_session_key,
+          session.process_pid,
+          session.last_agent_message_item_id,
+          session.last_agent_message,
+          session.last_agent_message_at,
+          session.last_item_sequence,
+          session.failure_reason,
+          session.started_at,
+          session.ended_at,
+          session.created_at,
+          session.updated_at,
+        );
+      if (input.idempotency_key) {
+        this.db
+          .prepare(
+            `INSERT INTO thread_idempotency_keys (
+              project_id, idempotency_key, session_id, created_at
+            ) VALUES (?, ?, ?, ?)`,
+          )
+          .run(
+            input.project_id,
+            input.idempotency_key,
+            session.id,
+            session.created_at,
+          );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      if (input.idempotency_key) {
+        const existing = this.getSessionByIdempotencyKey(
+          input.project_id,
+          input.idempotency_key,
+        );
+        if (existing) return existing;
+      }
+      throw error;
+    }
 
     return session;
+  }
+
+  getSessionByIdempotencyKey(
+    projectId: string,
+    idempotencyKey: string,
+  ): WorkerSession | null {
+    const row = this.db
+      .prepare(
+        `SELECT worker_sessions.*
+         FROM thread_idempotency_keys
+         INNER JOIN worker_sessions
+           ON worker_sessions.id = thread_idempotency_keys.session_id
+         WHERE thread_idempotency_keys.project_id = ?
+           AND thread_idempotency_keys.idempotency_key = ?
+         LIMIT 1`,
+      )
+      .get(projectId, idempotencyKey);
+    return row ? sessionFromRow(row) : null;
   }
 
   listSessions(options: SessionListOptions = {}): {
@@ -549,6 +613,7 @@ export class HubRepository {
       .prepare(
         `SELECT * FROM worker_sessions
          WHERE status IN (${TRANSIENT_SESSION_STATUS_SQL})
+           AND ${NOT_EMPTY_THREAD_SESSION_SQL}
          ORDER BY updated_at DESC, created_at DESC`,
       )
       .all()
@@ -616,7 +681,11 @@ export class HubRepository {
     extraValues: readonly string[] = [],
   ): number {
     const now = isoNow();
-    const where = [`status IN (${TRANSIENT_SESSION_STATUS_SQL})`, extraWhere]
+    const where = [
+      `status IN (${TRANSIENT_SESSION_STATUS_SQL})`,
+      NOT_EMPTY_THREAD_SESSION_SQL,
+      extraWhere,
+    ]
       .filter((entry): entry is string => Boolean(entry))
       .join(" AND ");
     const result = this.db
@@ -695,6 +764,14 @@ export class HubRepository {
   }
 
   createMessage(input: CreateMessageInput): import("@codexhub/core").Message {
+    if (input.idempotency_key) {
+      const existing = this.getMessageByIdempotencyKey(
+        input.session_id,
+        input.idempotency_key,
+      );
+      if (existing) return existing;
+    }
+
     const now = isoNow();
     const message = {
       id: id("msg"),
@@ -710,28 +787,83 @@ export class HubRepository {
       sent_at: null,
     };
 
-    this.db
-      .prepare(
-        `INSERT INTO messages (
-          id, session_id, mode, content, sender_type, sender_id, status,
-          codex_request_id, error, created_at, sent_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        message.id,
-        message.session_id,
-        message.mode,
-        message.content,
-        message.sender_type,
-        message.sender_id,
-        message.status,
-        message.codex_request_id,
-        message.error,
-        message.created_at,
-        message.sent_at,
-      );
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO messages (
+            id, session_id, mode, content, sender_type, sender_id, status,
+            codex_request_id, error, created_at, sent_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          message.id,
+          message.session_id,
+          message.mode,
+          message.content,
+          message.sender_type,
+          message.sender_id,
+          message.status,
+          message.codex_request_id,
+          message.error,
+          message.created_at,
+          message.sent_at,
+        );
+      if (input.idempotency_key) {
+        this.db
+          .prepare(
+            `INSERT INTO message_idempotency_keys (
+              session_id, idempotency_key, message_id, created_at
+            ) VALUES (?, ?, ?, ?)`,
+          )
+          .run(
+            input.session_id,
+            input.idempotency_key,
+            message.id,
+            message.created_at,
+          );
+      }
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      if (input.idempotency_key) {
+        const existing = this.getMessageByIdempotencyKey(
+          input.session_id,
+          input.idempotency_key,
+        );
+        if (existing) return existing;
+      }
+      throw error;
+    }
 
     return message;
+  }
+
+  getMessageByIdempotencyKey(
+    sessionId: string,
+    idempotencyKey: string,
+  ): import("@codexhub/core").Message | null {
+    const row = this.db
+      .prepare(
+        `SELECT messages.*
+         FROM message_idempotency_keys
+         INNER JOIN messages
+           ON messages.id = message_idempotency_keys.message_id
+         WHERE message_idempotency_keys.session_id = ?
+           AND message_idempotency_keys.idempotency_key = ?
+         LIMIT 1`,
+      )
+      .get(sessionId, idempotencyKey);
+    return row ? messageFromRow(row) : null;
+  }
+
+  deleteMessageIdempotencyKey(sessionId: string, idempotencyKey: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM message_idempotency_keys
+         WHERE session_id = ? AND idempotency_key = ?`,
+      )
+      .run(sessionId, idempotencyKey);
   }
 
   listMessages(sessionId: string): import("@codexhub/core").Message[] {
@@ -740,6 +872,21 @@ export class HubRepository {
         "SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC",
       )
       .all(sessionId)
+      .map(messageFromRow);
+  }
+
+  listFailedMessages(
+    sessionId: string,
+    limit = 10,
+  ): import("@codexhub/core").Message[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM messages
+         WHERE session_id = ? AND status = 'failed'
+         ORDER BY created_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(sessionId, limit)
       .map(messageFromRow);
   }
 
@@ -1017,7 +1164,7 @@ export class HubRepository {
             0 AS sort_sequence,
             id AS tie_id
           FROM messages
-          WHERE session_id = ? AND status = 'sent'
+          WHERE session_id = ? AND status IN ('sent', 'failed')
 
           UNION ALL
 

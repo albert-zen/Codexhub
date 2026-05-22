@@ -15,6 +15,7 @@ import {
   codexAppServerPayloadLine,
   codexInitializedNotification,
   codexInitializeRequest,
+  codexThreadResumeRequest,
   codexThreadStartRequest,
   codexTurnStartRequest,
   codexTurnSteerRequest,
@@ -37,6 +38,10 @@ export interface SendOptions {
   message: Message;
 }
 
+export interface ResumeOptions {
+  codexOptions?: unknown;
+}
+
 export interface CodexRuntimeController {
   hasLiveSession(session: WorkerSession): boolean | Promise<boolean>;
   startSession(
@@ -48,6 +53,11 @@ export interface CodexRuntimeController {
     session: WorkerSession,
     workspace: Workspace,
     options: SendOptions,
+  ): Promise<WorkerSession>;
+  resumeSession(
+    session: WorkerSession,
+    workspace: Workspace,
+    options?: ResumeOptions,
   ): Promise<WorkerSession>;
   stopSession(sessionId: string): void | Promise<void>;
   completeSession(sessionId: string): WorkerSession | Promise<WorkerSession>;
@@ -109,38 +119,14 @@ export class CodexRuntime implements CodexRuntimeController {
       return this.runFakeTurn(session.id, options.initialMessage);
     }
 
-    const launch = resolveCodexInvocation(codexOptions);
-    const child = spawn(launch.command, launch.args, {
-      cwd: workspace.cwd,
-      env: codexWorkerEnvironment(workspace, codexOptions.env),
-      windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const managed: ManagedSession = {
-      sessionId: session.id,
-      process: child,
-      pending: new Map(),
-      nextRequestId: 1,
-      stopped: false,
-      lineBuffers: { stdout: "", stderr: "" },
-    };
-
-    this.managed.set(session.id, managed);
-    this.installProcessHandlers(managed);
-    this.repo.updateSession(session.id, {
-      status: "starting",
-      process_pid: child.pid ? String(child.pid) : null,
-      started_at: new Date().toISOString(),
-    });
+    const managed = this.startManagedProcess(
+      session.id,
+      workspace,
+      codexOptions,
+    );
 
     try {
-      await this.sendRequest(
-        managed,
-        codexInitializeRequest,
-        codexOptions.responseTimeoutMs,
-      );
-      this.sendPayload(managed, codexInitializedNotification());
+      await this.initializeManaged(managed, codexOptions);
 
       const threadResult = await this.sendRequest(
         managed,
@@ -261,6 +247,64 @@ export class CodexRuntime implements CodexRuntimeController {
     });
   }
 
+  async resumeSession(
+    session: WorkerSession,
+    workspace: Workspace,
+    options: ResumeOptions = {},
+  ): Promise<WorkerSession> {
+    if (this.hasLiveSession(session)) return session;
+    const threadId = requireString(
+      session.codex_thread_id,
+      "session.codex_thread_id",
+    );
+    const codexOptions = parseCodexOptions(options.codexOptions);
+    if (codexOptions.fake || process.env.CODEXHUB_FAKE_CODEX === "1") {
+      this.fakeSessions.add(session.id);
+      return this.repo.updateSession(session.id, {
+        status: "awaiting_input",
+        process_pid: "fake",
+        started_at: session.started_at ?? new Date().toISOString(),
+        ended_at: null,
+      });
+    }
+
+    const managed = this.startManagedProcess(
+      session.id,
+      workspace,
+      codexOptions,
+    );
+    try {
+      await this.initializeManaged(managed, codexOptions);
+      const result = await this.sendRequest(
+        managed,
+        (id) =>
+          codexThreadResumeRequest(id, {
+            threadId,
+            approvalPolicy: codexOptions.approvalPolicy ?? "never",
+            sandbox: codexOptions.threadSandbox ?? "workspace-write",
+            cwd: workspace.cwd,
+          }),
+        codexOptions.responseTimeoutMs,
+      );
+      return this.repo.updateSession(session.id, {
+        status: "awaiting_input",
+        codex_thread_id: extractThreadId(result) ?? threadId,
+        process_pid: managed.process.pid ? String(managed.process.pid) : null,
+        started_at: session.started_at ?? new Date().toISOString(),
+        ended_at: null,
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      this.repo.updateSession(session.id, {
+        status: "failed",
+        failure_reason: message,
+        ended_at: new Date().toISOString(),
+      });
+      this.stopManaged(session.id);
+      throw error;
+    }
+  }
+
   stopSession(sessionId: string): void {
     const managed = this.managed.get(sessionId);
     if (managed) {
@@ -311,6 +355,50 @@ export class CodexRuntime implements CodexRuntimeController {
         }),
       codexOptions.responseTimeoutMs,
     );
+  }
+
+  private startManagedProcess(
+    sessionId: string,
+    workspace: Workspace,
+    codexOptions: CodexOptions,
+  ): ManagedSession {
+    const launch = resolveCodexInvocation(codexOptions);
+    const child = spawn(launch.command, launch.args, {
+      cwd: workspace.cwd,
+      env: codexWorkerEnvironment(workspace, codexOptions.env),
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const managed: ManagedSession = {
+      sessionId,
+      process: child,
+      pending: new Map(),
+      nextRequestId: 1,
+      stopped: false,
+      lineBuffers: { stdout: "", stderr: "" },
+    };
+
+    this.managed.set(sessionId, managed);
+    this.installProcessHandlers(managed);
+    this.repo.updateSession(sessionId, {
+      status: "starting",
+      process_pid: child.pid ? String(child.pid) : null,
+      started_at: new Date().toISOString(),
+    });
+    return managed;
+  }
+
+  private async initializeManaged(
+    managed: ManagedSession,
+    codexOptions: CodexOptions,
+  ): Promise<void> {
+    await this.sendRequest(
+      managed,
+      codexInitializeRequest,
+      codexOptions.responseTimeoutMs,
+    );
+    this.sendPayload(managed, codexInitializedNotification());
   }
 
   private async runFakeTurn(

@@ -615,6 +615,174 @@ describe("codexhub commands", () => {
     });
   });
 
+  it("creates project-scoped threads through the agent CLI surface", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const output: string[] = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          thread: {
+            id: "sess_1",
+            thread_state: "empty",
+            conversation_state: "ready",
+          },
+        });
+      },
+      stdout: (text) => output.push(text),
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "thread",
+      "create",
+      "--project",
+      "proj_1",
+      "--workspace",
+      "work_1",
+      "--json",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/projects/proj_1/threads");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      workspace_id: "work_1",
+    });
+    expect(JSON.parse(output.join(""))).toMatchObject({
+      thread: { id: "sess_1", thread_state: "empty" },
+    });
+  });
+
+  it("sends thread messages with wait and idempotency metadata", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const program = createProgram({
+      fetch: async (url, init) => {
+        calls.push({ url: String(url), init });
+        return jsonResponse({
+          message: { id: "msg_1", status: "sent" },
+          thread: { id: "sess_1", conversation_state: "ready" },
+        });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "thread",
+      "send",
+      "sess_1",
+      "--message",
+      "continue work",
+      "--wait",
+      "turn-complete",
+      "--idempotency-key",
+      "retry-key",
+    ]);
+
+    expect(calls[0]?.url).toBe("http://api.test/threads/sess_1/messages");
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      content: "continue work",
+      sender_type: "human",
+      wait: "turn-complete",
+      idempotency_key: "retry-key",
+    });
+  });
+
+  it("reads compact thread context windows", async () => {
+    const calls: string[] = [];
+    const program = createProgram({
+      fetch: async (url) => {
+        calls.push(String(url));
+        return jsonResponse({
+          thread: { id: "sess_1" },
+          latest_agent_message: "Ready.",
+          transcript: [],
+          allowed_actions: ["send"],
+          attention_reasons: [],
+          next_cursor: null,
+          limit: 10,
+        });
+      },
+      stdout: () => undefined,
+    });
+
+    await program.parseAsync([
+      "node",
+      "codexhub",
+      "--api",
+      "http://api.test",
+      "thread",
+      "context",
+      "sess_1",
+      "--limit",
+      "10",
+      "--tools",
+      "collapsed",
+      "--json",
+    ]);
+
+    expect(calls).toEqual([
+      "http://api.test/threads/sess_1/context?limit=10&tools=collapsed",
+    ]);
+  });
+
+  it("maps thread read commands to bounded thread endpoints", async () => {
+    const calls: string[] = [];
+    const run = async (args: string[]) => {
+      const program = createProgram({
+        fetch: async (url) => {
+          calls.push(String(url));
+          if (String(url).includes("/transcript")) {
+            return jsonResponse({ transcript: [], next_cursor: null });
+          }
+          if (String(url).includes("/latest")) {
+            return jsonResponse({ last_agent_message: "Ready." });
+          }
+          if (String(url).includes("/tool-calls")) {
+            return jsonResponse({ tool_calls: [], next_cursor: null });
+          }
+          return jsonResponse({
+            thread: {
+              id: "sess_1",
+              workspace_id: "work_1",
+              thread_state: "active",
+              conversation_state: "ready",
+            },
+            threads: [],
+          });
+        },
+        stdout: () => undefined,
+      });
+      await program.parseAsync([
+        "node",
+        "codexhub",
+        "--api",
+        "http://api.test",
+        ...args,
+        "--json",
+      ]);
+    };
+
+    await run(["thread", "list", "--project", "proj_1", "--limit", "5"]);
+    await run(["thread", "inspect", "sess_1"]);
+    await run(["thread", "trace", "sess_1", "--limit", "10"]);
+    await run(["thread", "latest", "sess_1"]);
+    await run(["thread", "tool-calls", "sess_1", "--tools", "expanded"]);
+
+    expect(calls).toEqual([
+      "http://api.test/projects/proj_1/threads?limit=5",
+      "http://api.test/threads/sess_1",
+      "http://api.test/threads/sess_1/transcript?limit=10&recent=true",
+      "http://api.test/threads/sess_1/latest?type=agentmessage",
+      "http://api.test/threads/sess_1/tool-calls?tools=expanded",
+    ]);
+  });
+
   it("cleans up workspaces with explicit file deletion opt-in", async () => {
     const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
     const output: string[] = [];

@@ -4,6 +4,7 @@ import {
   codexAppServerPayloadLine,
   codexInitializedNotification,
   codexInitializeRequest,
+  codexThreadResumeRequest,
   codexThreadStartRequest,
   codexTurnStartRequest,
   codexTurnSteerRequest,
@@ -81,6 +82,23 @@ describe("Codex app-server protocol adapter", () => {
         threadId: "thread-1",
         expectedTurnId: "turn-1",
         input: [{ type: "text", text: "Steer." }],
+      },
+    });
+    expect(
+      codexThreadResumeRequest(5, {
+        threadId: "thread-1",
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+        cwd: "D:\\work",
+      }),
+    ).toEqual({
+      method: "thread/resume",
+      id: 5,
+      params: {
+        threadId: "thread-1",
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+        cwd: "D:\\work",
       },
     });
   });

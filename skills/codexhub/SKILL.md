@@ -1,7 +1,7 @@
 # Codexhub Worker Control Plane Skill
 
 Use this skill when a manager agent wants to use Codexhub to create, launch,
-observe, continue, and coordinate Codex worker sessions with low context cost.
+observe, continue, and coordinate Codex worker threads with low context cost.
 
 This is a repo-local skill document. Do not install it into a machine-level
 Codex skills directory unless the user explicitly asks.
@@ -15,7 +15,8 @@ Use it to:
 
 - Create or reuse a project.
 - Create a workspace from a local directory, Git clone, or Git worktree.
-- Start a Codex worker session in that workspace.
+- Create a project-scoped worker thread in that workspace.
+- Start or resume the Codex runtime by sending a message to the thread.
 - Read recent high-signal output, especially complete agent messages.
 - Page through session history without re-reading already consumed context.
 - Inspect raw or filtered item streams when debugging.
@@ -23,6 +24,27 @@ Use it to:
 - Record useful friction or follow-up work.
 
 ## Manager-Agent Workflow
+
+1. Define the task spec outside the worker.
+2. Create or select a Codexhub project.
+3. Create a workspace with an explicit repo/path/cwd/branch.
+4. Create a project-scoped thread for the workspace.
+5. Send the first message to start the Codex runtime.
+6. Poll or watch bounded output instead of dumping full history.
+7. Use `thread context`, `thread trace`, or `thread latest` for normal status
+   checks.
+8. Use `thread items` or `thread tool-calls` only when raw item detail is
+   needed.
+9. Send another `thread send` message when the worker needs a steer or
+   continuation. Codexhub resumes the runtime first when the backing Codex
+   thread can be resumed.
+10. Stop only when the worker should be interrupted.
+
+The lower-level `session` commands remain available for compatibility,
+debugging, explicit follow-up sessions, review metadata, and raw lifecycle
+inspection. Prefer the thread surface for new manager-agent automation.
+
+Legacy session-first flow:
 
 1. Define the task spec outside the worker.
 2. Create or select a Codexhub project.
@@ -58,7 +80,7 @@ pnpm --silent --filter @codexhub/cli dev -- session trace <session_id> --after <
 
 Do not pipe plain `pnpm --filter @codexhub/cli dev -- ... --json` into
 `ConvertFrom-Json`, `jq`, or another JSON parser. If parsing fails after a
-side-effecting command such as creating a project, workspace, session,
+side-effecting command such as creating a project, workspace, thread, session,
 follow-up session, message, or run group, inspect existing Codexhub state before
 retrying so the manager does not duplicate the side effect.
 
@@ -153,6 +175,10 @@ the source checkout with a writable store.
 Prefer bounded reads:
 
 ```powershell
+codexhub thread context <thread_id> --limit 10 --tools collapsed --json
+codexhub thread trace <thread_id> --limit 20
+codexhub thread latest <thread_id>
+codexhub thread tool-calls <thread_id> --tools expanded --json
 codexhub session result <session_id>
 codexhub session trace <session_id> --limit 20
 codexhub session trace <session_id> --after <sequence> --limit 20 --json
@@ -176,6 +202,10 @@ codexhub session items <session_id> --limit 20 --after <sequence> --json
 Default to `agentmessage` when the manager only needs high-signal status.
 Request tool calls, tool results, and raw items only when necessary.
 
+Thread ids currently use the same canonical `sess_<uuid>` backing id as the
+underlying persisted session. Store and report the canonical id in manager
+state.
+
 Session commands accept the canonical `sess_<uuid>` id, a unique leading prefix
 including `sess_`, or a unique leading prefix from only the UUID portion. Keep
 storing and reporting canonical ids in manager state. If a prefix is ambiguous,
@@ -184,7 +214,22 @@ full id.
 
 ## Sending Messages
 
-Use explicit modes:
+For the normal agent-facing path, create an empty thread and send messages to
+that thread:
+
+```powershell
+codexhub thread create --project <project_id_or_name> --workspace <workspace_id> --idempotency-key <stable_key> --json
+codexhub thread send <thread_id> --message "Inspect this workspace and report status." --wait turn-complete --idempotency-key <stable_key> --json
+codexhub thread send <thread_id> --message "Continue with the next acceptance criterion and report validation results." --wait accepted --json
+```
+
+`thread send` starts the runtime when the thread is empty. If the backing
+session is detached, stopped, completed, or failed but still has a Codex thread
+cursor, Codexhub attempts to resume before sending. Treat resume as implicit;
+do not ask the human or manager agent to press a separate resume control.
+
+Use explicit session modes only when you intentionally operate on the lower-level
+session surface:
 
 ```powershell
 codexhub session send <session_id> --mode steer --message "Stay within apps/cli and keep JSON output stable."
@@ -202,8 +247,9 @@ Mode expectations:
 
 Do not rely on the worker to infer intent from an empty message.
 
-Stopped, completed, and failed sessions cannot be messaged because Codexhub does
-not revive dead Codex processes. Start a fresh related session instead:
+Stopped, completed, and failed sessions cannot be messaged through
+`session send` because that lower-level command does not resume Codex processes.
+Start a fresh related session instead:
 
 ```powershell
 codexhub session follow-up <terminal_session_id> --message "Continue from the previous result and report status." --json

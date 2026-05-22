@@ -6,33 +6,13 @@ import React, {
   useState,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { SESSION_ACTIONS, getSessionActionAvailability } from "@codexhub/core";
 import type {
   ID,
-  Item,
-  ItemType,
-  MessageMode,
   Project,
-  RunGroup,
-  RunGroupDashboardResponse,
-  RunGroupSessionSummary,
-  TaskSpecMetadata,
   TranscriptEntry,
   WorkerSession,
-  WorkerSessionStatus,
   Workspace,
-  SessionAction,
 } from "@codexhub/core";
-import {
-  attentionLabels,
-  reviewStateLabel,
-  runGroupDashboardCounts,
-} from "./run-group-dashboard.js";
-import {
-  RECENT_TRANSCRIPT_CURSOR,
-  type TranscriptCursor,
-  conversationWindow,
-} from "./transcript-view.js";
 import {
   canSendThreadMessage,
   conversationPageLabel,
@@ -41,59 +21,26 @@ import {
 } from "./thread-ui-state.js";
 import "./styles.css";
 
-type SendMessageMode = Exclude<MessageMode, "initial">;
-
-interface ItemPage {
-  items: Item[];
-  next_cursor: string | null;
-  limit: number;
-  type: string;
-}
-
 interface TranscriptPage {
   entries: TranscriptEntry[];
   next_cursor: string | null;
-  limit: number;
 }
 
-interface RunGroupDashboardPage {
-  runGroup: RunGroup;
-  summaries: RunGroupSessionSummary[];
-  next_cursor: string | null;
-  limit: number;
+interface ThreadDetailResponse {
+  session?: WorkerSession;
+  thread?: unknown;
+  workspace?: Workspace;
 }
 
-interface SessionDetail {
-  session: WorkerSession;
-  task_spec: TaskSpecMetadata | null;
-}
-
-type DetailMode = "session" | "run_group";
-
-interface LoadDetailOptions {
-  transcriptCursor: TranscriptCursor;
-  rawItemType: ItemType | "all";
-  rawItemAfter: number | null;
-  includeRawItems: boolean;
+interface SendThreadResponse {
+  session?: WorkerSession;
 }
 
 const API_BASE = (
   import.meta.env.VITE_CODEXHUB_API ?? "http://127.0.0.1:4317"
 ).replace(/\/+$/, "");
-const ITEM_TYPES: Array<ItemType | "all"> = [
-  "all",
-  "agentmessage",
-  "toolcall",
-  "toolresult",
-  "error",
-  "state",
-  "reasoning",
-  "raw",
-];
-const VISIBLE_TRANSCRIPT_LIMIT = 50;
-const TRANSCRIPT_FETCH_LIMIT = 100;
-const ITEM_PAGE_LIMIT = 50;
-const RUN_GROUP_SESSION_LIMIT = 50;
+const THREAD_LIST_LIMIT = 100;
+const TRANSCRIPT_LIMIT = 80;
 
 class ApiError extends Error {
   readonly status: number;
@@ -129,8 +76,9 @@ function queryString(
 ): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== null && value !== undefined && value !== "")
+    if (value !== null && value !== undefined && value !== "") {
       query.set(key, String(value));
+    }
   }
   const text = query.toString();
   return text ? `?${text}` : "";
@@ -201,9 +149,12 @@ async function fetchWorkspaces(projectId: ID): Promise<Workspace[]> {
   return listFrom<Workspace>(body, "workspaces");
 }
 
-async function fetchSessions(projectId: ID): Promise<WorkerSession[]> {
-  const nestedPath = `/projects/${encodeURIComponent(projectId)}/sessions${queryString({ limit: 100 })}`;
-  const flatPath = `/sessions${queryString({ project_id: projectId, limit: 100 })}`;
+async function fetchThreads(projectId: ID): Promise<WorkerSession[]> {
+  const nestedPath = `/projects/${encodeURIComponent(projectId)}/sessions${queryString({ limit: THREAD_LIST_LIMIT })}`;
+  const flatPath = `/sessions${queryString({
+    project_id: projectId,
+    limit: THREAD_LIST_LIMIT,
+  })}`;
   const body = await withFallback(
     () => request<unknown>(nestedPath),
     () => request<unknown>(flatPath),
@@ -211,63 +162,20 @@ async function fetchSessions(projectId: ID): Promise<WorkerSession[]> {
   return listFrom<WorkerSession>(body, "sessions");
 }
 
-async function fetchRunGroups(projectId: ID): Promise<RunGroup[]> {
-  const body = await request<unknown>(
-    `/run-groups${queryString({ project_id: projectId })}`,
+async function fetchThread(threadId: ID): Promise<WorkerSession> {
+  const body = await request<ThreadDetailResponse>(
+    `/threads/${encodeURIComponent(threadId)}`,
   );
-  return listFrom<RunGroup>(body, "run_groups");
+  if (body.session) return body.session;
+  return entityFrom<WorkerSession>(body, "session");
 }
 
-async function fetchRunGroupDashboard(
-  runGroupId: ID,
-  cursor: string | null,
-): Promise<RunGroupDashboardPage> {
-  const body = await request<RunGroupDashboardResponse>(
-    `/run-groups/${encodeURIComponent(runGroupId)}/dashboard${queryString({
-      limit: RUN_GROUP_SESSION_LIMIT,
-      cursor,
+async function fetchTranscript(threadId: ID): Promise<TranscriptPage> {
+  const body = await request<unknown>(
+    `/threads/${encodeURIComponent(threadId)}/transcript${queryString({
+      recent: true,
+      limit: TRANSCRIPT_LIMIT,
     })}`,
-  );
-  return {
-    runGroup: body.run_group,
-    summaries: body.session_summaries ?? body.items ?? [],
-    next_cursor: body.next_cursor,
-    limit: body.limit,
-  };
-}
-
-async function fetchSession(sessionId: ID): Promise<SessionDetail> {
-  const body = await request<unknown>(
-    `/sessions/${encodeURIComponent(sessionId)}`,
-  );
-  return {
-    session: entityFrom<WorkerSession>(body, "session"),
-    task_spec:
-      isObject(body) && isObject(body.task_spec)
-        ? (body.task_spec as unknown as TaskSpecMetadata)
-        : null,
-  };
-}
-
-async function fetchTranscript(
-  sessionId: ID,
-  cursor: TranscriptCursor,
-): Promise<TranscriptPage> {
-  const query = queryString({
-    limit: TRANSCRIPT_FETCH_LIMIT,
-    after_sequence: cursor.recent ? null : cursor.afterSequence,
-    recent: cursor.recent ? true : null,
-  });
-  const nestedPath = `/sessions/${encodeURIComponent(sessionId)}/transcript${query}`;
-  const flatPath = `/transcript${queryString({
-    session_id: sessionId,
-    limit: TRANSCRIPT_FETCH_LIMIT,
-    after_sequence: cursor.recent ? null : cursor.afterSequence,
-    recent: cursor.recent ? true : null,
-  })}`;
-  const body = await withFallback(
-    () => request<unknown>(nestedPath),
-    () => request<unknown>(flatPath),
   );
   return {
     entries: listFrom<TranscriptEntry>(body, "transcript"),
@@ -275,61 +183,7 @@ async function fetchTranscript(
       isObject(body) && typeof body.next_cursor === "string"
         ? body.next_cursor
         : null,
-    limit:
-      isObject(body) && typeof body.limit === "number"
-        ? body.limit
-        : TRANSCRIPT_FETCH_LIMIT,
   };
-}
-
-async function fetchItems(
-  sessionId: ID,
-  type: ItemType | "all",
-  afterSequence: number | null,
-): Promise<ItemPage> {
-  const query = queryString({
-    limit: ITEM_PAGE_LIMIT,
-    type: type === "all" ? null : type,
-    after_sequence: afterSequence,
-  });
-  const nestedPath = `/sessions/${encodeURIComponent(sessionId)}/items${query}`;
-  const flatPath = `/items${queryString({
-    session_id: sessionId,
-    limit: ITEM_PAGE_LIMIT,
-    type: type === "all" ? null : type,
-    after_sequence: afterSequence,
-  })}`;
-  const body = await withFallback(
-    () => request<unknown>(nestedPath),
-    () => request<unknown>(flatPath),
-  );
-  return {
-    items: listFrom<Item>(body, "items"),
-    next_cursor:
-      isObject(body) && typeof body.next_cursor === "string"
-        ? body.next_cursor
-        : null,
-    limit:
-      isObject(body) && typeof body.limit === "number"
-        ? body.limit
-        : ITEM_PAGE_LIMIT,
-    type: isObject(body) && typeof body.type === "string" ? body.type : type,
-  };
-}
-
-async function sendMessage(
-  sessionId: ID,
-  mode: SendMessageMode,
-  content: string,
-): Promise<void> {
-  await request<unknown>(`/threads/${encodeURIComponent(sessionId)}/messages`, {
-    method: "POST",
-    body: JSON.stringify({
-      mode,
-      content,
-      sender_type: "human",
-    }),
-  });
 }
 
 async function createThread(
@@ -349,6 +203,45 @@ async function createThread(
   return entityFrom<WorkerSession>(body, "session");
 }
 
+async function sendThreadMessage(
+  threadId: ID,
+  content: string,
+): Promise<WorkerSession> {
+  const body = await request<SendThreadResponse>(
+    `/threads/${encodeURIComponent(threadId)}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        mode: "continue",
+        content,
+        sender_type: "human",
+        wait: "accepted",
+        idempotency_key: `web-send-${threadId}-${Date.now()}`,
+      }),
+    },
+  );
+  if (body.session) return body.session;
+  return fetchThread(threadId);
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function shortId(value: string | null | undefined): string {
+  if (!value) return "-";
+  return value.length > 10 ? value.slice(0, 10) : value;
+}
+
+function compactText(
+  value: string | null | undefined,
+  fallback = "No messages yet.",
+): string {
+  const text = value?.replace(/\s+/g, " ").trim();
+  if (!text) return fallback;
+  return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+}
+
 function formatDate(value: string | null | undefined): string {
   if (!value) return "never";
   const date = new Date(value);
@@ -361,624 +254,172 @@ function formatDate(value: string | null | undefined): string {
   }).format(date);
 }
 
-function shortId(value: string | null | undefined): string {
-  if (!value) return "-";
-  return value.length > 10 ? value.slice(0, 10) : value;
+function statusLabel(session: WorkerSession): string {
+  if (isEmptyThreadSession(session)) return "empty";
+  if (isResumableThreadSession(session)) return "idle";
+  if (session.status === "awaiting_input") return "ready";
+  if (session.status === "running") return "running";
+  if (session.status === "starting") return "starting";
+  return session.status.replace("_", " ");
 }
 
-function compactText(
-  value: string | null | undefined,
-  fallback = "No message yet.",
-): string {
-  const text = value?.trim();
-  return text ? text : fallback;
+function readableThreadTitle(session: WorkerSession): string {
+  if (isEmptyThreadSession(session)) return "New thread";
+  return compactText(session.last_agent_message, shortId(session.id));
 }
 
-function statusClass(status: WorkerSessionStatus): string {
-  return `status status-${status.replace("_", "-")}`;
-}
-
-function statusLabel(status: WorkerSessionStatus): string {
-  return status.replace("_", " ");
-}
-
-function attentionClass(label: string): string {
-  return `attention-badge attention-${label.toLowerCase().replaceAll(" ", "-")}`;
-}
-
-function preferredWorkspaceId(
-  workspaces: Workspace[],
-  current: string,
-  fallback?: string | null,
-): string {
-  if (current && workspaces.some((workspace) => workspace.id === current)) {
-    return current;
+function transcriptRole(entry: TranscriptEntry): string {
+  if (entry.kind === "message") {
+    if (entry.sender_type === "manager_agent") return "Manager";
+    if (entry.sender_type === "system") return "System";
+    return "You";
   }
-  if (fallback && workspaces.some((workspace) => workspace.id === fallback)) {
-    return fallback;
-  }
-  return (
-    workspaces.find((workspace) => workspace.status === "ready")?.id ??
-    workspaces[0]?.id ??
-    ""
-  );
-}
-
-function displayJson(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "No renderable payload.";
-  }
-}
-
-function messageTitle(mode: MessageMode | null): string {
-  if (mode === "initial") return "Initial Prompt";
-  if (mode === "continue") return "Continue";
-  if (mode === "steer") return "Steer";
-  return "Message";
-}
-
-function itemTypeTitle(type: ItemType | null): string {
-  if (type === "toolcall") return "Tool Call";
-  if (type === "toolresult") return "Tool Result";
-  if (type === "reasoning") return "Reasoning";
-  if (type === "error") return "Error";
-  if (type === "state") return "State";
-  if (type === "agentmessage") return "Agent Message Item";
-  if (type === "raw") return "Raw Item";
-  return "Debug";
-}
-
-function itemTitle(item: Item): string {
-  if (item.type === "raw") return "Raw Item";
-  return itemTypeTitle(item.type);
-}
-
-function transcriptTitle(entry: TranscriptEntry): string {
-  if (entry.kind === "message") return messageTitle(entry.message_mode);
   if (entry.kind === "agent_message") return "Agent";
-  if (entry.kind === "tool") return itemTypeTitle(entry.item_type);
-  return itemTypeTitle(entry.item_type);
+  if (entry.kind === "tool") return "Tool";
+  return "Event";
 }
 
-function transcriptClass(entry: TranscriptEntry): string {
-  if (entry.kind === "message") return "transcript-message";
-  if (entry.kind === "agent_message") return "transcript-agent";
-  if (entry.kind === "tool") {
-    return entry.item_type === "toolresult"
-      ? "transcript-toolresult"
-      : "transcript-toolcall";
-  }
-  return `transcript-${entry.item_type ?? "debug"}`;
-}
-
-function truncateSummary(value: string | null | undefined): string | null {
-  const text = value?.replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  return text.length > 220 ? `${text.slice(0, 220)}...` : text;
-}
-
-function transcriptSummary(entry: TranscriptEntry): string {
-  const text = truncateSummary(entry.text);
+function transcriptText(entry: TranscriptEntry): string {
+  const text = entry.text?.trim();
   if (text) return text;
-  const parts = [
-    entry.codex_method,
-    entry.codex_item_type,
-    entry.codex_item_id ? `id ${shortId(entry.codex_item_id)}` : null,
-  ].filter(Boolean);
-  return parts.join(" - ") || "No transcript text.";
+  if (entry.kind === "tool") {
+    return [
+      entry.codex_method,
+      entry.codex_item_type,
+      entry.item_sequences.length > 0
+        ? `items ${entry.item_sequences.join(", ")}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" / ");
+  }
+  return "No visible text.";
 }
 
-function itemSummary(item: Item): string {
-  const parts = [
-    item.codex_method,
-    item.codex_item_type,
-    item.codex_item_id ? `id ${shortId(item.codex_item_id)}` : null,
-  ].filter(Boolean);
-  const summary = parts.join(" - ") || "No summary.";
-  return summary.length > 220 ? `${summary.slice(0, 220)}...` : summary;
-}
-
-function sequenceRangeLabel(values: number[]): string {
-  if (values.length === 0) return "no raw items";
-  const sorted = [...values].sort((a, b) => a - b);
-  const first = sorted[0] ?? 0;
-  const last = sorted[sorted.length - 1] ?? first;
-  if (first === last) return `item #${first}`;
-  return `items #${first}-${last} (${sorted.length})`;
-}
-
-function itemWindowLabel(items: Item[], afterSequence: number | null): string {
-  if (items.length === 0) return `after #${afterSequence ?? 0}`;
-  const first = items[0]?.sequence ?? afterSequence ?? 0;
-  const last = items[items.length - 1]?.sequence ?? first;
-  return first === last ? `#${first}` : `#${first}-${last}`;
-}
-
-function transcriptMetadata(entry: TranscriptEntry): Record<string, unknown> {
-  return {
-    source: entry.source,
-    source_id: entry.source_id,
-    role: entry.role,
-    codex_method: entry.codex_method,
-    codex_item_id: entry.codex_item_id,
-    codex_item_type: entry.codex_item_type,
-    item_ids: entry.item_ids,
-    item_sequences: entry.item_sequences,
-  };
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function TranscriptMetadataDetails({ entry }: { entry: TranscriptEntry }) {
+function preferredWorkspace(workspaces: Workspace[]): Workspace | null {
   return (
-    <details className="payload-details">
-      <summary>Transcript metadata</summary>
-      <pre>{displayJson(transcriptMetadata(entry))}</pre>
-    </details>
+    workspaces.find((workspace) => workspace.status === "ready") ??
+    workspaces[0] ??
+    null
   );
 }
 
-interface RunGroupDashboardProps {
-  runGroup: RunGroup;
-  summaries: RunGroupSessionSummary[];
-  counts: ReturnType<typeof runGroupDashboardCounts>;
-  loading: boolean;
-  nextCursor: string | null;
-  historyLength: number;
-  onNext: () => Promise<void>;
-  onPrevious: () => Promise<void>;
-  onOpenSession: (sessionId: ID) => void;
-}
-
-function RunGroupDashboard({
-  runGroup,
-  summaries,
-  counts,
-  loading,
-  nextCursor,
-  historyLength,
-  onNext,
-  onPrevious,
-  onOpenSession,
-}: RunGroupDashboardProps) {
-  return (
-    <>
-      <div className="session-context">
-        <section className="run-group-summary-strip" aria-label="Run group">
-          <div className="task-title">
-            <span className="label">Run Group</span>
-            <strong>{runGroup.name}</strong>
-            <p className="run-group-purpose">
-              {compactText(runGroup.purpose, "No purpose recorded.")}
-            </p>
-          </div>
-          <dl className="run-group-metrics">
-            <div>
-              <dt>Shown</dt>
-              <dd>{counts.total}</dd>
-            </div>
-            <div>
-              <dt>Attention</dt>
-              <dd>{counts.attention}</dd>
-            </div>
-            <div>
-              <dt>Failed</dt>
-              <dd>{counts.failed}</dd>
-            </div>
-            <div>
-              <dt>Awaiting</dt>
-              <dd>{counts.awaitingInput}</dd>
-            </div>
-            <div>
-              <dt>Review</dt>
-              <dd>{counts.reviewNeeded}</dd>
-            </div>
-            <div>
-              <dt>Findings</dt>
-              <dd>{counts.openReviewFindings}</dd>
-            </div>
-          </dl>
-        </section>
-      </div>
-
-      <section
-        className="run-group-dashboard-shell"
-        aria-label="Run group dashboard"
-      >
-        <div className="section-heading conversation-heading">
-          <div>
-            <h3>Batch Dashboard</h3>
-            <p>
-              Showing {summaries.length} session
-              {summaries.length === 1 ? "" : "s"}; page limit{" "}
-              {RUN_GROUP_SESSION_LIMIT}
-            </p>
-          </div>
-          <div className="item-controls">
-            <button
-              className="button button-secondary button-compact"
-              type="button"
-              onClick={() => void onPrevious()}
-              disabled={loading || historyLength === 0}
-            >
-              Previous
-            </button>
-            <button
-              className="button button-secondary button-compact"
-              type="button"
-              onClick={() => void onNext()}
-              disabled={loading || nextCursor === null}
-            >
-              Next
-            </button>
-          </div>
-        </div>
-
-        <div className="run-group-session-list" aria-busy={loading}>
-          {summaries.map((summary) => {
-            const labels = attentionLabels(summary);
-            return (
-              <article
-                className={`run-group-session-card ${summary.attention_required ? "needs-attention" : ""}`}
-                key={summary.session.id}
-              >
-                <div className="run-group-card-topline">
-                  <div>
-                    <strong>{shortId(summary.session.id)}</strong>
-                    <span className={statusClass(summary.session.status)}>
-                      {statusLabel(summary.session.status)}
-                    </span>
-                  </div>
-                  <div className="attention-list">
-                    {labels.length > 0 ? (
-                      labels.map((label) => (
-                        <span className={attentionClass(label)} key={label}>
-                          {label}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="attention-badge attention-clear">
-                        Clear
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <p className="run-group-latest">
-                  {compactText(summary.session.last_agent_message)}
-                </p>
-                <dl className="run-group-session-meta">
-                  <div>
-                    <dt>Review</dt>
-                    <dd>{reviewStateLabel(summary)}</dd>
-                  </div>
-                  <div>
-                    <dt>Findings</dt>
-                    <dd>
-                      {summary.open_review_finding_count}/
-                      {summary.review_finding_count}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Items</dt>
-                    <dd>{summary.session.last_item_sequence}</dd>
-                  </div>
-                  <div>
-                    <dt>Updated</dt>
-                    <dd>{formatDate(summary.session.updated_at)}</dd>
-                  </div>
-                </dl>
-                {summary.session.failure_reason ? (
-                  <p className="run-group-failure">
-                    {summary.session.failure_reason}
-                  </p>
-                ) : null}
-                <div className="action-row run-group-card-actions">
-                  <button
-                    className="button button-secondary button-compact"
-                    type="button"
-                    onClick={() => onOpenSession(summary.session.id)}
-                  >
-                    Open Session
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-          {!loading && summaries.length === 0 ? (
-            <p className="empty">No sessions in this run group page.</p>
-          ) : null}
-        </div>
-      </section>
-    </>
-  );
+function mergeThread(
+  threads: WorkerSession[],
+  updated: WorkerSession,
+): WorkerSession[] {
+  const next = threads.filter((thread) => thread.id !== updated.id);
+  return [updated, ...next];
 }
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<ID | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [sessions, setSessions] = useState<WorkerSession[]>([]);
-  const [runGroups, setRunGroups] = useState<RunGroup[]>([]);
-  const [selectedRunGroupId, setSelectedRunGroupId] = useState<ID | null>(null);
-  const [runGroupSummaries, setRunGroupSummaries] = useState<
-    RunGroupSessionSummary[]
-  >([]);
-  const [runGroupCursor, setRunGroupCursor] = useState<string | null>(null);
-  const [runGroupHistory, setRunGroupHistory] = useState<Array<string | null>>(
-    [],
-  );
-  const [runGroupNextCursor, setRunGroupNextCursor] = useState<string | null>(
+  const [threads, setThreads] = useState<WorkerSession[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<ID | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<ID | null>(null);
+  const [selectedThread, setSelectedThread] = useState<WorkerSession | null>(
     null,
   );
-  const [runGroupDetail, setRunGroupDetail] =
-    useState<RunGroupDashboardPage | null>(null);
-  const [activeDetail, setActiveDetail] = useState<DetailMode>("session");
-  const [selectedSessionId, setSelectedSessionId] = useState<ID | null>(null);
-  const [selectedSession, setSelectedSession] = useState<WorkerSession | null>(
-    null,
-  );
-  const [taskSpec, setTaskSpec] = useState<TaskSpecMetadata | null>(null);
   const [transcriptEntries, setTranscriptEntries] = useState<TranscriptEntry[]>(
     [],
   );
-  const [transcriptCursor, setTranscriptCursor] = useState<TranscriptCursor>(
-    RECENT_TRANSCRIPT_CURSOR,
-  );
-  const [transcriptHistory, setTranscriptHistory] = useState<
-    TranscriptCursor[]
-  >([]);
-  const [transcriptNextCursor, setTranscriptNextCursor] = useState<
-    string | null
-  >(null);
-  const [showRawItems, setShowRawItems] = useState(false);
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemAfter, setItemAfter] = useState<number | null>(null);
-  const [itemHistory, setItemHistory] = useState<number[]>([]);
-  const [itemNextCursor, setItemNextCursor] = useState<string | null>(null);
-  const [itemType, setItemType] = useState<ItemType | "all">("all");
   const [message, setMessage] = useState("");
   const [loadingProjects, setLoadingProjects] = useState(false);
-  const [loadingWorkspaces, setLoadingWorkspaces] = useState(false);
-  const [loadingSessions, setLoadingSessions] = useState(false);
-  const [, setLoadingRunGroups] = useState(false);
-  const [loadingRunGroupDetail, setLoadingRunGroupDetail] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [submitting, setSubmitting] = useState<SessionAction | null>(null);
-  const [creatingThreadProjectId, setCreatingThreadProjectId] =
-    useState<ID | null>(null);
+  const [loadingThreads, setLoadingThreads] = useState(false);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
+  const [creatingProjectId, setCreatingProjectId] = useState<ID | null>(null);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const actionAvailability = selectedSession
-    ? getSessionActionAvailability({
-        status: selectedSession.status,
-        message,
-        submitting,
-      })
-    : null;
-  const selectedThreadIsEmpty = isEmptyThreadSession(selectedSession);
-  const canSendSelectedThread = canSendThreadMessage({
-    session: selectedSession,
-    message,
-    submitting,
-    continueDisabled: actionAvailability?.continue.disabled ?? true,
-  });
-  const disabledActions = actionAvailability
-    ? SESSION_ACTIONS.filter((action) => actionAvailability[action].disabled)
-    : [];
-  const disabledComposerActions = disabledActions.filter(
-    (action) =>
-      !selectedThreadIsEmpty &&
-      !isResumableThreadSession(selectedSession) &&
-      (action === "steer" || action === "continue") &&
-      !(action === "continue" && isResumableThreadSession(selectedSession)),
-  );
-  const actionHelpId =
-    disabledComposerActions.length > 0 ? "session-action-help" : undefined;
+
   const selectedProject = useMemo(
-    () => projects.find((project) => project.id === selectedProjectId) ?? null,
+    () =>
+      projects.find((project) => project.id === selectedProjectId) ?? null,
     [projects, selectedProjectId],
   );
-  const selectedRunGroup = useMemo(
-    () =>
-      runGroupDetail?.runGroup ??
-      runGroups.find((runGroup) => runGroup.id === selectedRunGroupId) ??
-      null,
-    [runGroupDetail, runGroups, selectedRunGroupId],
+  const workspaceById = useMemo(
+    () => new Map(workspaces.map((workspace) => [workspace.id, workspace])),
+    [workspaces],
   );
-  const runGroupCounts = useMemo(
-    () => runGroupDashboardCounts(runGroupSummaries),
-    [runGroupSummaries],
-  );
-
-  const conversationTranscriptEntries = useMemo(
-    () => conversationWindow(transcriptEntries, VISIBLE_TRANSCRIPT_LIMIT),
-    [transcriptEntries],
-  );
-
-  const previousTranscriptCursor = useMemo(() => {
-    const firstSequence = transcriptEntries[0]?.sequence;
-    if (firstSequence === undefined || firstSequence <= 1) return null;
-    return {
-      afterSequence: Math.max(0, firstSequence - TRANSCRIPT_FETCH_LIMIT - 1),
-      recent: false,
-    };
-  }, [transcriptEntries]);
-
-  const canLoadPreviousTranscript =
-    transcriptHistory.length > 0 || previousTranscriptCursor !== null;
+  const sendDisabledByRuntime =
+    selectedThread?.status === "running" ||
+    (selectedThread?.status === "starting" &&
+      !isEmptyThreadSession(selectedThread));
+  const canSend = canSendThreadMessage({
+    session: selectedThread,
+    message,
+    submitting: sending ? "continue" : null,
+    continueDisabled: sendDisabledByRuntime,
+  });
 
   const loadProjects = useCallback(async () => {
     setLoadingProjects(true);
     setError(null);
     try {
-      const nextProjects = await fetchProjects();
-      setProjects(nextProjects);
+      const loaded = await fetchProjects();
+      setProjects(loaded);
       setSelectedProjectId((current) => {
-        if (current && nextProjects.some((project) => project.id === current))
+        if (current && loaded.some((project) => project.id === current)) {
           return current;
-        return nextProjects[0]?.id ?? null;
+        }
+        return loaded[0]?.id ?? null;
       });
     } catch (loadError) {
-      setProjects([]);
-      setSelectedProjectId(null);
-      setError(`Projects: ${getErrorMessage(loadError)}`);
+      setError(getErrorMessage(loadError));
     } finally {
       setLoadingProjects(false);
     }
   }, []);
 
-  const loadWorkspaces = useCallback(async (projectId: ID) => {
-    setLoadingWorkspaces(true);
-    setError(null);
-    try {
-      const nextWorkspaces = await fetchWorkspaces(projectId);
-      setWorkspaces(nextWorkspaces);
-    } catch (loadError) {
-      setWorkspaces([]);
-      setError(`Workspaces: ${getErrorMessage(loadError)}`);
-    } finally {
-      setLoadingWorkspaces(false);
-    }
-  }, []);
-
-  const loadSessions = useCallback(async (projectId: ID) => {
-    setLoadingSessions(true);
-    setError(null);
-    try {
-      const nextSessions = await fetchSessions(projectId);
-      setSessions(nextSessions);
-      setSelectedSessionId((current) => {
-        if (current && nextSessions.some((session) => session.id === current))
-          return current;
-        return nextSessions[0]?.id ?? null;
-      });
-    } catch (loadError) {
-      setSessions([]);
-      setSelectedSessionId(null);
-      setError(`Threads: ${getErrorMessage(loadError)}`);
-    } finally {
-      setLoadingSessions(false);
-    }
-  }, []);
-
-  const loadRunGroups = useCallback(async (projectId: ID) => {
-    setLoadingRunGroups(true);
-    setError(null);
-    try {
-      const nextRunGroups = await fetchRunGroups(projectId);
-      setRunGroups(nextRunGroups);
-      setSelectedRunGroupId((current) => {
-        if (
-          current &&
-          nextRunGroups.some((runGroup) => runGroup.id === current)
-        ) {
-          return current;
-        }
-        return nextRunGroups[0]?.id ?? null;
-      });
-    } catch (loadError) {
-      setRunGroups([]);
-      setSelectedRunGroupId(null);
-      setRunGroupDetail(null);
-      setRunGroupSummaries([]);
-      setRunGroupNextCursor(null);
-      setError(`Run groups: ${getErrorMessage(loadError)}`);
-    } finally {
-      setLoadingRunGroups(false);
-    }
-  }, []);
-
-  const loadRunGroupDetail = useCallback(
-    async (runGroupId: ID, cursor: string | null) => {
-      setLoadingRunGroupDetail(true);
+  const loadProjectData = useCallback(
+    async (projectId: ID, preferredThreadId: ID | null = selectedThreadId) => {
+      setLoadingThreads(true);
       setError(null);
       try {
-        const nextDetail = await fetchRunGroupDashboard(runGroupId, cursor);
-        setRunGroupDetail(nextDetail);
-        setRunGroupSummaries(nextDetail.summaries);
-        setRunGroupNextCursor(nextDetail.next_cursor);
+        const [loadedWorkspaces, loadedThreads] = await Promise.all([
+          fetchWorkspaces(projectId),
+          fetchThreads(projectId),
+        ]);
+        setWorkspaces(loadedWorkspaces);
+        setThreads(loadedThreads);
+        setSelectedThreadId((current) => {
+          const desired = preferredThreadId ?? current;
+          if (
+            desired &&
+            loadedThreads.some((thread) => thread.id === desired)
+          ) {
+            return desired;
+          }
+          return loadedThreads[0]?.id ?? null;
+        });
       } catch (loadError) {
-        setRunGroupDetail(null);
-        setRunGroupSummaries([]);
-        setRunGroupNextCursor(null);
-        setError(`Run group detail: ${getErrorMessage(loadError)}`);
+        setError(getErrorMessage(loadError));
       } finally {
-        setLoadingRunGroupDetail(false);
+        setLoadingThreads(false);
       }
     },
-    [],
+    [selectedThreadId],
   );
 
-  const loadDetail = useCallback(
-    async (sessionId: ID, options: LoadDetailOptions) => {
-      setLoadingDetail(true);
-      setError(null);
-      try {
-        const rawItemsPromise = options.includeRawItems
-          ? fetchItems(sessionId, options.rawItemType, options.rawItemAfter)
-          : Promise.resolve<ItemPage | null>(null);
-        const [nextSessionDetail, nextTranscriptPage, nextItemPage] =
-          await Promise.all([
-            fetchSession(sessionId),
-            fetchTranscript(sessionId, options.transcriptCursor),
-            rawItemsPromise,
-          ]);
-        setSelectedSession(nextSessionDetail.session);
-        setTaskSpec(nextSessionDetail.task_spec);
-        setTranscriptEntries(nextTranscriptPage.entries);
-        setTranscriptNextCursor(nextTranscriptPage.next_cursor);
-        setItems(nextItemPage?.items ?? []);
-        setItemNextCursor(nextItemPage?.next_cursor ?? null);
-      } catch (loadError) {
-        setSelectedSession(null);
-        setTaskSpec(null);
-        setTranscriptEntries([]);
-        setTranscriptNextCursor(null);
-        setItems([]);
-        setItemNextCursor(null);
-        setError(`Thread detail: ${getErrorMessage(loadError)}`);
-      } finally {
-        setLoadingDetail(false);
-      }
-    },
-    [],
-  );
-
-  const refreshCurrent = useCallback(async () => {
-    if (selectedProjectId) {
-      await Promise.all([
-        loadSessions(selectedProjectId),
-        loadRunGroups(selectedProjectId),
+  const loadThread = useCallback(async (threadId: ID) => {
+    setLoadingTranscript(true);
+    setError(null);
+    try {
+      const [thread, transcript] = await Promise.all([
+        fetchThread(threadId),
+        fetchTranscript(threadId),
       ]);
+      setSelectedThread(thread);
+      setThreads((current) => mergeThread(current, thread));
+      setTranscriptEntries(transcript.entries);
+    } catch (loadError) {
+      setError(getErrorMessage(loadError));
+      setTranscriptEntries([]);
+    } finally {
+      setLoadingTranscript(false);
     }
-    if (selectedSessionId)
-      await loadDetail(selectedSessionId, {
-        transcriptCursor,
-        rawItemType: itemType,
-        rawItemAfter: itemAfter,
-        includeRawItems: showRawItems,
-      });
-    if (selectedRunGroupId)
-      await loadRunGroupDetail(selectedRunGroupId, runGroupCursor);
-  }, [
-    itemAfter,
-    itemType,
-    loadDetail,
-    loadRunGroupDetail,
-    loadRunGroups,
-    loadSessions,
-    runGroupCursor,
-    selectedProjectId,
-    selectedRunGroupId,
-    selectedSessionId,
-    showRawItems,
-    transcriptCursor,
-  ]);
+  }, []);
 
   useEffect(() => {
     void loadProjects();
@@ -987,660 +428,283 @@ function App() {
   useEffect(() => {
     if (!selectedProjectId) {
       setWorkspaces([]);
-      setSessions([]);
-      setRunGroups([]);
-      setSelectedSessionId(null);
-      setSelectedRunGroupId(null);
-      setRunGroupDetail(null);
-      setRunGroupSummaries([]);
-      setRunGroupCursor(null);
-      setRunGroupHistory([]);
-      setRunGroupNextCursor(null);
-      setActiveDetail("session");
+      setThreads([]);
+      setSelectedThreadId(null);
       return;
     }
-    void loadWorkspaces(selectedProjectId);
-    void loadSessions(selectedProjectId);
-    void loadRunGroups(selectedProjectId);
-  }, [loadRunGroups, loadSessions, loadWorkspaces, selectedProjectId]);
+    void loadProjectData(selectedProjectId);
+  }, [loadProjectData, selectedProjectId]);
 
   useEffect(() => {
-    if (!selectedSessionId) {
-      setSelectedSession(null);
-      setTaskSpec(null);
+    if (!selectedThreadId) {
+      setSelectedThread(null);
       setTranscriptEntries([]);
-      setTranscriptCursor(RECENT_TRANSCRIPT_CURSOR);
-      setTranscriptHistory([]);
-      setTranscriptNextCursor(null);
-      setItems([]);
-      setItemAfter(null);
-      setItemHistory([]);
-      setItemNextCursor(null);
       return;
     }
-    setTranscriptCursor(RECENT_TRANSCRIPT_CURSOR);
-    setTranscriptHistory([]);
-    setItemAfter(null);
-    setItemHistory([]);
-    void loadDetail(selectedSessionId, {
-      transcriptCursor: RECENT_TRANSCRIPT_CURSOR,
-      rawItemType: itemType,
-      rawItemAfter: null,
-      includeRawItems: showRawItems,
-    });
-  }, [itemType, loadDetail, selectedSessionId, showRawItems]);
+    void loadThread(selectedThreadId);
+  }, [loadThread, selectedThreadId]);
 
   useEffect(() => {
-    if (!selectedRunGroupId) {
-      setRunGroupDetail(null);
-      setRunGroupSummaries([]);
-      setRunGroupCursor(null);
-      setRunGroupHistory([]);
-      setRunGroupNextCursor(null);
-      return;
+    if (selectedThread) {
+      composerRef.current?.focus();
     }
-    setRunGroupCursor(null);
-    setRunGroupHistory([]);
-    void loadRunGroupDetail(selectedRunGroupId, null);
-  }, [loadRunGroupDetail, selectedRunGroupId]);
+  }, [selectedThread?.id]);
 
-  useEffect(() => {
-    if (selectedThreadIsEmpty) composerRef.current?.focus();
-  }, [selectedThreadIsEmpty, selectedSession?.id]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      void refreshCurrent();
-    }, 5000);
-    return () => window.clearInterval(timer);
-  }, [refreshCurrent]);
-
-  async function handleSend(mode: SendMessageMode) {
-    if (!selectedSession) return;
-    const content = message.trim();
-    const availability = getSessionActionAvailability({
-      status: selectedSession.status,
-      message: content,
-      submitting,
-    })[mode];
-    if (
-      !isEmptyThreadSession(selectedSession) &&
-      availability.disabled &&
-      !(mode === "continue" && isResumableThreadSession(selectedSession))
-    ) {
-      return;
-    }
-    setSubmitting(mode);
+  async function handleCreateThread(project: Project) {
+    setCreatingProjectId(project.id);
     setError(null);
     try {
-      await sendMessage(selectedSession.id, mode, content);
+      let projectWorkspaces = workspaces;
+      if (project.id !== selectedProjectId) {
+        projectWorkspaces = await fetchWorkspaces(project.id);
+        setWorkspaces(projectWorkspaces);
+      }
+      const workspace = preferredWorkspace(projectWorkspaces);
+      if (!workspace) {
+        throw new Error("Project has no workspace available for a new thread.");
+      }
+      const thread = await createThread(project.id, workspace.id);
+      setSelectedProjectId(project.id);
+      setThreads((current) => mergeThread(current, thread));
+      setSelectedThreadId(thread.id);
+      setSelectedThread(thread);
+      setTranscriptEntries([]);
       setMessage("");
-      await refreshCurrent();
-    } catch (sendError) {
-      setError(`${mode}: ${getErrorMessage(sendError)}`);
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function handleCreateThread(projectId: ID) {
-    if (creatingThreadProjectId) return;
-    setCreatingThreadProjectId(projectId);
-    setError(null);
-    try {
-      const projectWorkspaces =
-        projectId === selectedProjectId
-          ? workspaces
-          : await fetchWorkspaces(projectId);
-      const workspaceId = preferredWorkspaceId(projectWorkspaces, "");
-      if (!workspaceId) throw new Error("No workspace is available.");
-      const thread = await createThread(projectId, workspaceId);
-      await loadSessions(projectId);
-      setSelectedProjectId(projectId);
-      setWorkspaces(projectWorkspaces);
-      setSelectedSessionId(thread.id);
-      setActiveDetail("session");
-      setMessage("");
+      requestAnimationFrame(() => composerRef.current?.focus());
     } catch (createError) {
-      setError(`Thread: ${getErrorMessage(createError)}`);
+      setError(getErrorMessage(createError));
     } finally {
-      setCreatingThreadProjectId(null);
+      setCreatingProjectId(null);
     }
   }
 
-  async function handleNextRunGroupSessions() {
-    if (!selectedRunGroupId || runGroupNextCursor === null) return;
-    const nextCursor = runGroupNextCursor;
-    setRunGroupHistory((current) => [...current, runGroupCursor]);
-    setRunGroupCursor(nextCursor);
-    await loadRunGroupDetail(selectedRunGroupId, nextCursor);
+  async function handleSend() {
+    if (!selectedThread || !canSend) return;
+    const content = message.trim();
+    setSending(true);
+    setError(null);
+    setMessage("");
+    try {
+      const updated = await sendThreadMessage(selectedThread.id, content);
+      setSelectedThread(updated);
+      setThreads((current) => mergeThread(current, updated));
+      await loadThread(updated.id);
+    } catch (sendError) {
+      setError(getErrorMessage(sendError));
+      setMessage(content);
+      await loadThread(selectedThread.id);
+    } finally {
+      setSending(false);
+    }
   }
 
-  async function handlePreviousRunGroupSessions() {
-    if (!selectedRunGroupId || runGroupHistory.length === 0) return;
-    const previousHistory = runGroupHistory.slice(0, -1);
-    const previousCursor = runGroupHistory[runGroupHistory.length - 1] ?? null;
-    setRunGroupHistory(previousHistory);
-    setRunGroupCursor(previousCursor);
-    await loadRunGroupDetail(selectedRunGroupId, previousCursor);
-  }
-
-  async function handleNextTranscript() {
-    if (!selectedSession || transcriptNextCursor === null) return;
-    const nextAfter = Number(transcriptNextCursor);
-    if (!Number.isInteger(nextAfter)) return;
-    const nextCursor = { afterSequence: nextAfter, recent: false };
-    setTranscriptHistory((current) => [...current, transcriptCursor]);
-    setTranscriptCursor(nextCursor);
-    await loadDetail(selectedSession.id, {
-      transcriptCursor: nextCursor,
-      rawItemType: itemType,
-      rawItemAfter: itemAfter,
-      includeRawItems: showRawItems,
-    });
-  }
-
-  async function handlePreviousTranscript() {
-    if (!selectedSession) return;
-    const previousHistory = transcriptHistory.slice(0, -1);
-    const previousCursor =
-      transcriptHistory[transcriptHistory.length - 1] ??
-      previousTranscriptCursor;
-    if (!previousCursor) return;
-    setTranscriptHistory(previousHistory);
-    setTranscriptCursor(previousCursor);
-    await loadDetail(selectedSession.id, {
-      transcriptCursor: previousCursor,
-      rawItemType: itemType,
-      rawItemAfter: itemAfter,
-      includeRawItems: showRawItems,
-    });
-  }
-
-  async function handleNextItems() {
-    if (!selectedSession || itemNextCursor === null) return;
-    const nextAfter = Number(itemNextCursor);
-    if (!Number.isInteger(nextAfter)) return;
-    setItemHistory((current) => [...current, itemAfter ?? 0]);
-    setItemAfter(nextAfter);
-    await loadDetail(selectedSession.id, {
-      transcriptCursor,
-      rawItemType: itemType,
-      rawItemAfter: nextAfter,
-      includeRawItems: showRawItems,
-    });
-  }
-
-  async function handlePreviousItems() {
-    if (!selectedSession || itemHistory.length === 0) return;
-    const previousHistory = itemHistory.slice(0, -1);
-    const previousAfter = itemHistory[itemHistory.length - 1] ?? 0;
-    setItemHistory(previousHistory);
-    setItemAfter(previousAfter === 0 ? null : previousAfter);
-    await loadDetail(selectedSession.id, {
-      transcriptCursor,
-      rawItemType: itemType,
-      rawItemAfter: previousAfter === 0 ? null : previousAfter,
-      includeRawItems: showRawItems,
-    });
+  function handleComposerKeyDown(
+    event: React.KeyboardEvent<HTMLTextAreaElement>,
+  ) {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      void handleSend();
+    }
   }
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>Codexhub</h1>
-          <p>{API_BASE}</p>
-        </div>
-        <button
-          className="button button-secondary"
-          type="button"
-          onClick={loadProjects}
-          disabled={loadingProjects}
-        >
-          Refresh
-        </button>
-      </header>
-
-      {error ? (
-        <div className="notice" role="alert">
-          {error}
-        </div>
-      ) : null}
-
-      <section className="workspace-grid" aria-label="Codexhub control plane">
-        <aside className="panel project-panel" aria-label="Projects">
-          <div className="panel-heading">
-            <h2>Projects</h2>
-            <span>{loadingProjects ? "Loading" : projects.length}</span>
+      <aside className="sidebar" aria-label="Projects and threads">
+        <header className="brand">
+          <div className="mark" aria-hidden="true">
+            C
           </div>
-          <div className="list">
-            {projects.map((project) => (
-              <div
-                className={`project-row-shell ${project.id === selectedProjectId ? "is-active" : ""}`}
-                key={project.id}
-              >
-                <button
-                  className="list-row project-select-row"
-                  type="button"
-                  onClick={() => setSelectedProjectId(project.id)}
+          <div className="brand-copy">
+            <h1>CodexHub</h1>
+            <p>{API_BASE}</p>
+          </div>
+          <button
+            className="icon-button refresh-button"
+            type="button"
+            title="Refresh"
+            aria-label="Refresh"
+            onClick={() => void loadProjects()}
+            disabled={loadingProjects}
+          >
+            R
+          </button>
+        </header>
+
+        {error ? (
+          <div className="notice" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        <nav className="project-tree" aria-busy={loadingProjects}>
+          {projects.map((project) => {
+            const isActive = project.id === selectedProjectId;
+            const visibleThreads = isActive ? threads : [];
+            return (
+              <section className="project-node" key={project.id}>
+                <div
+                  className={`project-row ${isActive ? "is-active" : ""}`}
                 >
-                  <strong>{project.name}</strong>
-                  <span>
-                    {project.default_branch ??
-                      project.default_cwd ??
-                      shortId(project.id)}
-                  </span>
-                </button>
-                <button
-                  className="icon-button"
-                  type="button"
-                  title={`New thread in ${project.name}`}
-                  aria-label={`New thread in ${project.name}`}
-                  onClick={() => void handleCreateThread(project.id)}
-                  disabled={
-                    creatingThreadProjectId !== null ||
-                    (project.id === selectedProjectId &&
-                      (loadingWorkspaces || workspaces.length === 0))
-                  }
-                >
-                  +
-                </button>
-              </div>
-            ))}
-            {!loadingProjects && projects.length === 0 ? (
-              <p className="empty">No projects returned.</p>
-            ) : null}
-          </div>
-        </aside>
-
-        <aside className="panel session-panel" aria-label="Threads">
-          <div className="panel-heading">
-            <div>
-              <h2>Threads</h2>
-              <p>{selectedProject?.name ?? "Select a project"}</p>
-            </div>
-            <span>{loadingSessions ? "Loading" : sessions.length}</span>
-          </div>
-          <div className="list session-list">
-            {sessions.map((session) => (
-              <button
-                className={`list-row session-row ${session.id === selectedSessionId ? "is-active" : ""}`}
-                key={session.id}
-                type="button"
-                onClick={() => {
-                  setSelectedSessionId(session.id);
-                  setActiveDetail("session");
-                }}
-              >
-                <span className="row-topline">
-                  <strong>{shortId(session.id)}</strong>
-                </span>
-                <span className="message-preview">
-                  {isEmptyThreadSession(session)
-                    ? "New thread"
-                    : compactText(session.last_agent_message)}
-                </span>
-                <span>Updated {formatDate(session.updated_at)}</span>
-              </button>
-            ))}
-            {!loadingSessions && selectedProjectId && sessions.length === 0 ? (
-              <p className="empty">No threads returned.</p>
-            ) : null}
-          </div>
-        </aside>
-
-        <section
-          className="panel detail-panel"
-          aria-label={
-            activeDetail === "run_group" ? "Run group detail" : "Thread detail"
-          }
-        >
-          <div className="panel-heading detail-heading">
-            <div>
-              <h2>{activeDetail === "run_group" ? "Run Group" : "Thread"}</h2>
-              <p>
-                {activeDetail === "run_group"
-                  ? (selectedRunGroup?.name ?? "Select a run group")
-                  : selectedSession
-                    ? shortId(selectedSession.id)
-                    : "Select a thread"}
-              </p>
-            </div>
-            {activeDetail === "run_group" && selectedRunGroup ? (
-              <span className="dashboard-pill">
-                {loadingRunGroupDetail
-                  ? "Loading"
-                  : `${runGroupCounts.attention} attention`}
-              </span>
-            ) : null}
-          </div>
-
-          {activeDetail === "run_group" ? (
-            selectedRunGroup ? (
-              <RunGroupDashboard
-                runGroup={selectedRunGroup}
-                summaries={runGroupSummaries}
-                counts={runGroupCounts}
-                loading={loadingRunGroupDetail}
-                nextCursor={runGroupNextCursor}
-                historyLength={runGroupHistory.length}
-                onNext={handleNextRunGroupSessions}
-                onPrevious={handlePreviousRunGroupSessions}
-                onOpenSession={(sessionId) => {
-                  setSelectedSessionId(sessionId);
-                  setActiveDetail("session");
-                }}
-              />
-            ) : (
-              <p className="empty detail-empty">No run group selected.</p>
-            )
-          ) : selectedSession ? (
-            <>
-              <div className="session-context">
-                <section className="task-spec-strip" aria-label="Task spec">
-                  <div className="task-title">
-                    <span className="label">Task</span>
-                    <strong>
-                      {compactText(
-                        taskSpec?.title ?? taskSpec?.intent,
-                        "No task spec snapshot.",
-                      )}
-                    </strong>
-                  </div>
-                  <dl className="session-meta-list">
-                    <div>
-                      <dt>Workspace</dt>
-                      <dd>{shortId(selectedSession.workspace_id)}</dd>
-                    </div>
-                    <div>
-                      <dt>Ref</dt>
-                      <dd>{taskSpec?.ref ?? "snapshot"}</dd>
-                    </div>
-                    <div>
-                      <dt>Updated</dt>
-                      <dd>{formatDate(selectedSession.updated_at)}</dd>
-                    </div>
-                  </dl>
-                </section>
-              </div>
-
-              <section
-                className="conversation-shell"
-                aria-label="Thread conversation"
-              >
-                <div className="section-heading conversation-heading">
-                  <div>
-                    <h3>Conversation</h3>
-                    <p>{conversationPageLabel(transcriptEntries)}</p>
-                  </div>
-                  <div className="item-controls">
-                    <label className="toggle-label">
-                      <input
-                        type="checkbox"
-                        checked={showRawItems}
-                        onChange={(event) =>
-                          setShowRawItems(event.target.checked)
-                        }
-                      />
-                      Raw items
-                    </label>
-                    <button
-                      className="button button-secondary button-compact"
-                      type="button"
-                      onClick={() => void handlePreviousTranscript()}
-                      disabled={loadingDetail || !canLoadPreviousTranscript}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      className="button button-secondary button-compact"
-                      type="button"
-                      onClick={() => void handleNextTranscript()}
-                      disabled={loadingDetail || transcriptNextCursor === null}
-                    >
-                      Next
-                    </button>
-                  </div>
+                  <button
+                    className="project-select"
+                    type="button"
+                    onClick={() => setSelectedProjectId(project.id)}
+                  >
+                    <span className="tree-chevron" aria-hidden="true">
+                      {isActive ? "v" : ">"}
+                    </span>
+                    <span className="project-copy">
+                      <strong>{project.name}</strong>
+                      <span>
+                        {project.default_cwd ??
+                          project.default_branch ??
+                          shortId(project.id)}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    title={`New thread in ${project.name}`}
+                    aria-label={`New thread in ${project.name}`}
+                    onClick={() => void handleCreateThread(project)}
+                    disabled={creatingProjectId !== null}
+                  >
+                    +
+                  </button>
                 </div>
 
-                <div className="conversation-scroll" aria-busy={loadingDetail}>
-                  <div className="chat-stream">
-                    {conversationTranscriptEntries.map((entry) => {
-                      if (entry.kind === "message") {
-                        return (
-                          <article
-                            className="chat-row chat-row-user"
-                            key={entry.id}
-                          >
-                            <div className="chat-bubble chat-bubble-user">
-                              <div className="chat-meta">
-                                <strong>
-                                  {messageTitle(entry.message_mode)}
-                                </strong>
-                                <span>Entry #{entry.sequence}</span>
-                                <span className="message-status">
-                                  {entry.message_status ?? entry.role}
-                                </span>
-                                <time>{formatDate(entry.created_at)}</time>
-                              </div>
-                              <p>{compactText(entry.text, "Continue.")}</p>
-                              <TranscriptMetadataDetails entry={entry} />
-                            </div>
-                          </article>
-                        );
-                      }
-
-                      if (entry.kind === "agent_message") {
-                        return (
-                          <article
-                            className="chat-row chat-row-agent"
-                            key={entry.id}
-                          >
-                            <div className="chat-bubble chat-bubble-agent">
-                              <div className="chat-meta">
-                                <strong>Agent</strong>
-                                <span>Entry #{entry.sequence}</span>
-                                <span>
-                                  {sequenceRangeLabel(entry.item_sequences)}
-                                </span>
-                                <time>{formatDate(entry.created_at)}</time>
-                              </div>
-                              <p>{compactText(entry.text)}</p>
-                              <TranscriptMetadataDetails entry={entry} />
-                            </div>
-                          </article>
-                        );
-                      }
-
+                {isActive ? (
+                  <div className="thread-list" aria-busy={loadingThreads}>
+                    {visibleThreads.map((thread) => {
+                      const workspace = workspaceById.get(thread.workspace_id);
                       return (
-                        <details
-                          className={`chat-tool ${transcriptClass(entry)}`}
-                          key={entry.id}
+                        <button
+                          className={`thread-row ${
+                            thread.id === selectedThreadId ? "is-active" : ""
+                          }`}
+                          key={thread.id}
+                          type="button"
+                          onClick={() => setSelectedThreadId(thread.id)}
                         >
-                          <summary className="tool-summary">
-                            <strong>{transcriptTitle(entry)}</strong>
-                            <span>Entry #{entry.sequence}</span>
-                            <span>{transcriptSummary(entry)}</span>
-                            <time>{formatDate(entry.created_at)}</time>
-                          </summary>
-                          <div className="tool-body">
-                            <div className="chat-meta">
-                              <strong>Tool</strong>
-                              <span>
-                                {sequenceRangeLabel(entry.item_sequences)}
-                              </span>
-                              <span>
-                                {entry.codex_method ??
-                                  entry.codex_item_type ??
-                                  entry.item_type ??
-                                  entry.role}
-                              </span>
-                              <time>{formatDate(entry.created_at)}</time>
-                            </div>
-                            <p>
-                              {compactText(entry.text, "No transcript text.")}
-                            </p>
-                            <TranscriptMetadataDetails entry={entry} />
-                          </div>
-                        </details>
+                          <span className="thread-title">
+                            {readableThreadTitle(thread)}
+                          </span>
+                          <span className="thread-meta">
+                            {statusLabel(thread)} ·{" "}
+                            {workspace?.cwd ?? shortId(thread.workspace_id)}
+                          </span>
+                        </button>
                       );
                     })}
-                    {!loadingDetail &&
-                    conversationTranscriptEntries.length === 0 ? (
-                      <p className="empty">
-                        {selectedThreadIsEmpty
-                          ? "Start this thread with the composer below."
-                          : "No complete conversation entries in this page."}
-                      </p>
+                    {!loadingThreads && visibleThreads.length === 0 ? (
+                      <p className="tree-empty">No threads yet.</p>
                     ) : null}
                   </div>
-
-                  {showRawItems ? (
-                    <div
-                      className="raw-item-panel"
-                      aria-label="Raw item inspection"
-                    >
-                      <div className="section-heading raw-item-heading">
-                        <div>
-                          <h3>Raw Item Inspection</h3>
-                          <p>
-                            Items {itemWindowLabel(items, itemAfter)}; page
-                            limit {ITEM_PAGE_LIMIT}
-                          </p>
-                        </div>
-                        <div className="item-controls">
-                          <label>
-                            Type
-                            <select
-                              value={itemType}
-                              onChange={(event) =>
-                                setItemType(
-                                  event.target.value as ItemType | "all",
-                                )
-                              }
-                            >
-                              {ITEM_TYPES.map((type) => (
-                                <option key={type} value={type}>
-                                  {type}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <button
-                            className="button button-secondary button-compact"
-                            type="button"
-                            onClick={() => void handlePreviousItems()}
-                            disabled={loadingDetail || itemHistory.length === 0}
-                          >
-                            Previous
-                          </button>
-                          <button
-                            className="button button-secondary button-compact"
-                            type="button"
-                            onClick={() => void handleNextItems()}
-                            disabled={loadingDetail || itemNextCursor === null}
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-
-                      <div
-                        className="item-list raw-item-list"
-                        aria-busy={loadingDetail}
-                      >
-                        {items.map((item) => (
-                          <article
-                            className={`transcript-row transcript-${item.type}`}
-                            key={item.id}
-                          >
-                            <div className="transcript-meta">
-                              <strong>{itemTitle(item)}</strong>
-                              <span>Item #{item.sequence}</span>
-                              <span>
-                                {item.codex_method ??
-                                  item.codex_item_type ??
-                                  item.type}
-                              </span>
-                              <time>{formatDate(item.created_at)}</time>
-                            </div>
-                            <p>{itemSummary(item)}</p>
-                            <details className="payload-details">
-                              <summary>Raw payload</summary>
-                              <pre>{displayJson(item.raw_payload)}</pre>
-                            </details>
-                          </article>
-                        ))}
-                        {!loadingDetail && items.length === 0 ? (
-                          <p className="empty">
-                            No raw items match this filter.
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-
-              <section
-                className="composer composer-bottom"
-                aria-label="Send thread message"
-              >
-                <textarea
-                  ref={composerRef}
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  placeholder="Message this thread..."
-                  rows={3}
-                />
-                <div className="action-row">
-                  <button
-                    className="button"
-                    type="button"
-                    onClick={() => void handleSend("continue")}
-                    disabled={!canSendSelectedThread}
-                    aria-describedby={
-                      !selectedThreadIsEmpty &&
-                      actionAvailability?.continue.disabled
-                        ? actionHelpId
-                        : undefined
-                    }
-                  >
-                    Send
-                  </button>
-                  {!selectedThreadIsEmpty ? (
-                    <button
-                      className="button button-secondary"
-                      type="button"
-                      onClick={() => void handleSend("steer")}
-                      disabled={actionAvailability?.steer.disabled ?? true}
-                      aria-describedby={
-                        actionAvailability?.steer.disabled
-                          ? actionHelpId
-                          : undefined
-                      }
-                    >
-                      Steer
-                    </button>
-                  ) : null}
-                </div>
-                {actionAvailability && disabledComposerActions.length > 0 ? (
-                  <dl className="action-help" id="session-action-help">
-                    {disabledComposerActions.map((action) => (
-                      <div key={action}>
-                        <dt>{actionAvailability[action].label}</dt>
-                        <dd>{actionAvailability[action].reasons.join(" ")}</dd>
-                      </div>
-                    ))}
-                  </dl>
                 ) : null}
               </section>
-            </>
-          ) : (
-            <p className="empty detail-empty">No thread selected.</p>
-          )}
-        </section>
+            );
+          })}
+          {!loadingProjects && projects.length === 0 ? (
+            <p className="tree-empty">No projects yet.</p>
+          ) : null}
+        </nav>
+      </aside>
+
+      <section className="chat-surface" aria-label="Thread chat">
+        <header className="chat-header">
+          <div>
+            <p className="eyebrow">{selectedProject?.name ?? "No project"}</p>
+            <h2>
+              {selectedThread
+                ? readableThreadTitle(selectedThread)
+                : "Select or create a thread"}
+            </h2>
+          </div>
+          {selectedThread ? (
+            <div className="quiet-meta">
+              <span>{statusLabel(selectedThread)}</span>
+              <span>{formatDate(selectedThread.updated_at)}</span>
+            </div>
+          ) : null}
+        </header>
+
+        <div className="message-window" aria-busy={loadingTranscript}>
+          <div className="message-list">
+            {selectedThread && transcriptEntries.length > 0 ? (
+              transcriptEntries.map((entry) => (
+                <article
+                  className={`message-row message-${entry.kind}`}
+                  key={entry.id}
+                >
+                  <div className="message-author">
+                    <strong>{transcriptRole(entry)}</strong>
+                    <time>{formatDate(entry.created_at)}</time>
+                  </div>
+                  <div className="message-body">
+                    <p>{transcriptText(entry)}</p>
+                  </div>
+                </article>
+              ))
+            ) : selectedThread ? (
+              <div className="empty-chat">
+                <h3>
+                  {isEmptyThreadSession(selectedThread)
+                    ? "New thread"
+                    : "No visible messages"}
+                </h3>
+                <p>
+                  {isEmptyThreadSession(selectedThread)
+                    ? "Type the first message below."
+                    : "The conversation is empty in the current window."}
+                </p>
+              </div>
+            ) : (
+              <div className="empty-chat">
+                <h3>Choose a thread</h3>
+                <p>
+                  Use the + button beside a project to create one in the right
+                  workspace.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <footer className="composer" aria-label="Send message">
+          <div className="composer-context">
+            <span>
+              {selectedThread
+                ? conversationPageLabel(transcriptEntries)
+                : "No thread selected"}
+            </span>
+            {sending ? <span>Sending...</span> : null}
+          </div>
+          <div className="composer-box">
+            <textarea
+              ref={composerRef}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder={
+                selectedThread
+                  ? "Message this thread..."
+                  : "Create or select a thread to start..."
+              }
+              rows={3}
+              disabled={!selectedThread || sending}
+            />
+            <button
+              className="send-button"
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!canSend}
+              aria-label="Send message"
+            >
+              ^
+            </button>
+          </div>
+        </footer>
       </section>
     </main>
   );

@@ -48,6 +48,43 @@ describe("thread UI state", () => {
     ).toBe(true);
   });
 
+  it("does not send into a non-empty thread while a turn is running", () => {
+    const thread = session({
+      status: "running",
+      started_at: "2026-05-22T00:00:00.000Z",
+      last_item_sequence: 5,
+      last_agent_message: "Working.",
+    });
+
+    expect(
+      canSendThreadMessage({
+        session: thread,
+        message: "Interrupt?",
+        submitting: null,
+        continueDisabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not promise invisible resume without a Codex thread cursor", () => {
+    const thread = session({
+      status: "failed",
+      codex_thread_id: null,
+      process_pid: null,
+      ended_at: "2026-05-22T00:00:00.000Z",
+    });
+
+    expect(isResumableThreadSession(thread)).toBe(false);
+    expect(
+      canSendThreadMessage({
+        session: thread,
+        message: "Continue.",
+        submitting: null,
+        continueDisabled: true,
+      }),
+    ).toBe(false);
+  });
+
   it("labels the visible conversation without leaking cursor internals", () => {
     expect(conversationPageLabel([])).toBe("No visible messages");
     expect(

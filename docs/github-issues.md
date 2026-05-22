@@ -72,19 +72,26 @@ No broad first-stage hardening issue is open in this local synthesis. Issues
 `#19` through `#40` are closed and represent implemented baseline unless a later
 dogfood run opens a narrower regression or UX follow-up.
 
-Architecture-refactor evidence currently points to narrower follow-ups already
-tracked in GitHub:
+After the Thread-first architecture/UI cleanup, the active GitHub backlog is
+narrower:
 
-- `#44`: missing CLI `session complete` command and contradictory completed
-  session response with stale `failure_reason`.
+- `#43`: add CodexHub Home for Codexhub-owned control-plane data. This replaces
+  the old isolated-worker-`CODEX_HOME` direction; Codex login state should
+  remain user-global by default.
+- `#44`: decide/fix lower-level `session complete` consistency. The Web no
+  longer exposes complete as a primary Thread operation, so this should stay
+  scoped to compatibility/bookkeeping semantics.
 - `#45`: residual wrong-mode send API contract characterization risk.
-- `#46`: self-dogfood session orphaning from API runtime ownership loss.
+- `#46`: document supervisor-mode workflow for server-touching self-dogfood
+  batches. Runtime behavior changes belong elsewhere.
 - `#47`: linked-worktree Git commit/amend sandbox friction.
 - `#48`: CLI `session start --file` relative-path resolution friction.
 - `#49`: deferred deeper repository/state-substrate split beyond the raw item
   log.
-- `#50`: deferred presentation-helper scope beyond session action
-  availability.
+- `#51`: decide whether RunGroup remains an optional batch/history surface, is
+  renamed, or is deprecated from supported product language.
+- `#53`: preserve detached/resumable Thread semantics on server startup instead
+  of marking missing runtime ownership as task failure.
 
 ## Later Closed Follow-Ups
 
@@ -112,6 +119,23 @@ tracked in GitHub:
     terminal and can be continued through a fresh follow-up session.
   - Runtime details and the remaining boundary are documented in
     `docs/runtime-supervisor.md`.
+
+- `#41 fix(web): make newly started sessions discoverable outside run groups`
+  - Superseded by the Thread-first Web UI: project rows own Thread creation,
+    project threads are listed directly, and new empty Threads open into the
+    chat composer immediately.
+
+- `#42 fix(web): separate stale historical run groups from active operator view`
+  - Superseded by the Thread-first Web UI. RunGroups no longer dominate the
+    default operator surface.
+
+- `#50 refactor(core): complete presentation helpers for bounded operator views`
+  - Closed as obsolete in its original session/run-group-dashboard form. Future
+    helper extraction should be driven by concrete Thread UI/CLI duplication.
+
+- `#52 refactor(session): separate resumable thread state from runtime liveness`
+  - Superseded by the Thread-first state architecture and UI refactor. The
+    remaining valid slice is tracked as `#53`.
 
 ## Runtime Supervisor Follow-Up Draft
 

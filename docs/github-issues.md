@@ -78,9 +78,8 @@ narrower:
 - `#43`: add CodexHub Home for Codexhub-owned control-plane data. This replaces
   the old isolated-worker-`CODEX_HOME` direction; Codex login state should
   remain user-global by default.
-- `#44`: decide/fix lower-level `session complete` consistency. The Web no
-  longer exposes complete as a primary Thread operation, so this should stay
-  scoped to compatibility/bookkeeping semantics.
+- `#44`: deprecate the manager `complete` action. Do not add CLI parity for an
+  unwanted concept; keep any retained route as legacy bookkeeping only.
 - `#45`: residual wrong-mode send API contract characterization risk.
 - `#46`: document supervisor-mode workflow for server-touching self-dogfood
   batches. Runtime behavior changes belong elsewhere.
